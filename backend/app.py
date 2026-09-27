@@ -25,31 +25,12 @@ from flask_cors import CORS
 from analyzer import analyze_repo
 
 
-# ---------------------------------------------------------
-# Paths
-# ---------------------------------------------------------
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-# The frontend files are directly inside the parent folder:
-#
-# GPT1/
-# ├── index.html
-# ├── script.js
-# ├── styles.css
-# └── backend/
-
 FRONTEND_DIR = os.path.abspath(os.path.join(BASE_DIR, ".."))
-
 SAMPLE_REPO = os.path.join(BASE_DIR, "sample_repo")
 
 
-# ---------------------------------------------------------
-# Sample repository name detection
-# ---------------------------------------------------------
-
 def _parse_github_url(github_url):
-    """Validate a GitHub repository URL and return (owner, repo)."""
     try:
         parsed = urlparse(github_url.strip())
     except Exception:
@@ -85,7 +66,6 @@ def _parse_github_url(github_url):
 
 
 def _github_default_branch(owner, repo):
-    """Get the default branch for a public GitHub repository."""
     api_url = (
         f"https://api.github.com/repos/"
         f"{quote(owner)}/{quote(repo)}"
@@ -115,13 +95,6 @@ def _github_default_branch(owner, repo):
 
 
 def _download_github_repo(github_url):
-    """
-    Download a public GitHub repository as a ZIP archive
-    and extract it.
-
-    Returns:
-        (temporary_directory, repository_root, project_name)
-    """
     parsed = _parse_github_url(github_url)
 
     if not parsed:
@@ -190,11 +163,8 @@ def _download_github_repo(github_url):
             )
 
         with zipfile.ZipFile(zip_path) as zf:
-            base_path = os.path.realpath(
-                upload_dir
-            )
+            base_path = os.path.realpath(upload_dir)
 
-            # Validate archive paths before extraction.
             for member in zf.infolist():
                 target = os.path.realpath(
                     os.path.join(
@@ -210,8 +180,7 @@ def _download_github_repo(github_url):
                     )
                 ):
                     raise ValueError(
-                        "GitHub archive contains "
-                        "an unsafe file path."
+                        "GitHub archive contains an unsafe file path."
                     )
 
             zf.extractall(upload_dir)
@@ -285,7 +254,6 @@ def _download_github_repo(github_url):
             upload_dir,
             entries[0]
         )
-
     else:
         root = upload_dir
 
@@ -293,21 +261,6 @@ def _download_github_repo(github_url):
 
 
 def get_sample_project_name(root):
-    """
-    Try to determine the project name from the repository.
-
-    Priority:
-        1. pyproject.toml
-        2. package.json
-        3. README.md first heading
-        4. setup.py
-        5. Generic fallback
-    """
-
-    # -----------------------------------------------------
-    # 1. pyproject.toml
-    # -----------------------------------------------------
-
     pyproject_path = os.path.join(
         root,
         "pyproject.toml"
@@ -322,8 +275,6 @@ def get_sample_project_name(root):
             ) as f:
                 content = f.read()
 
-            # Handles:
-            # name = "My Project"
             match = re.search(
                 r'^\s*name\s*=\s*["\']([^"\']+)["\']',
                 content,
@@ -335,10 +286,6 @@ def get_sample_project_name(root):
 
         except Exception:
             pass
-
-    # -----------------------------------------------------
-    # 2. package.json
-    # -----------------------------------------------------
 
     package_json_path = os.path.join(
         root,
@@ -362,10 +309,6 @@ def get_sample_project_name(root):
         except Exception:
             pass
 
-    # -----------------------------------------------------
-    # 3. README.md
-    # -----------------------------------------------------
-
     readme_path = os.path.join(
         root,
         "README.md"
@@ -381,9 +324,6 @@ def get_sample_project_name(root):
                 for line in f:
                     line = line.strip()
 
-                    # Look for a Markdown heading:
-                    # # My Project
-                    # ## My Project
                     match = re.match(
                         r"^#{1,6}\s+(.+?)\s*$",
                         line
@@ -397,10 +337,6 @@ def get_sample_project_name(root):
 
         except Exception:
             pass
-
-    # -----------------------------------------------------
-    # 4. setup.py
-    # -----------------------------------------------------
 
     setup_path = os.path.join(
         root,
@@ -427,33 +363,14 @@ def get_sample_project_name(root):
         except Exception:
             pass
 
-    # -----------------------------------------------------
-    # 5. Fallback
-    # -----------------------------------------------------
-
     return "Sample Repository"
 
-
-# ---------------------------------------------------------
-# Flask
-# ---------------------------------------------------------
 
 app = Flask(
     __name__,
     static_folder=None
 )
 
-
-# ---------------------------------------------------------
-# CORS
-# ---------------------------------------------------------
-#
-# The frontend is hosted on GitHub Pages while the Flask
-# backend is hosted on Render. Because these are different
-# origins, the browser requires CORS permission.
-#
-# Only the CodeOrbit GitHub Pages origin is allowed.
-# ---------------------------------------------------------
 
 CORS(
     app,
@@ -467,21 +384,11 @@ CORS(
 )
 
 
-# Holds the most recent analysis so /api/explain can
-# look up file details without the client re-uploading
-# the whole repo.
-#
-# Fine for a single-user hackathon demo.
-
 LAST_ANALYSIS = {
     "root": None,
     "result": None,
 }
 
-
-# ---------------------------------------------------------
-# Frontend
-# ---------------------------------------------------------
 
 @app.route("/")
 def index():
@@ -499,10 +406,6 @@ def static_files(filename):
     )
 
 
-# ---------------------------------------------------------
-# API
-# ---------------------------------------------------------
-
 @app.route(
     "/api/analyze",
     methods=["POST"]
@@ -511,10 +414,6 @@ def api_analyze():
     upload_dir = None
     project_name = "repository"
     github_url = None
-
-    # -----------------------------------------------------
-    # ZIP upload
-    # -----------------------------------------------------
 
     if (
         request.content_type
@@ -552,9 +451,7 @@ def api_analyze():
 
         try:
             with zipfile.ZipFile(zip_path) as zf:
-                zf.extractall(
-                    upload_dir
-                )
+                zf.extractall(upload_dir)
 
         except zipfile.BadZipFile:
             shutil.rmtree(
@@ -570,8 +467,6 @@ def api_analyze():
 
         os.remove(zip_path)
 
-        # If the ZIP contains one top-level folder,
-        # analyze inside that folder.
         entries = [
             e
             for e in os.listdir(upload_dir)
@@ -596,10 +491,6 @@ def api_analyze():
 
         else:
             root = upload_dir
-
-    # -----------------------------------------------------
-    # GitHub repository
-    # -----------------------------------------------------
 
     elif (
         request.is_json
@@ -649,10 +540,6 @@ def api_analyze():
                 project_name = detected_name
 
         else:
-            # -----------------------------------------------------
-            # Sample repository
-            # -----------------------------------------------------
-
             root = SAMPLE_REPO
 
             project_name = (
@@ -660,10 +547,6 @@ def api_analyze():
                     root
                 )
             )
-
-    # -----------------------------------------------------
-    # Sample repository
-    # -----------------------------------------------------
 
     else:
         root = SAMPLE_REPO
@@ -673,10 +556,6 @@ def api_analyze():
                 root
             )
         )
-
-    # -----------------------------------------------------
-    # Analyze
-    # -----------------------------------------------------
 
     try:
         result = analyze_repo(
@@ -691,47 +570,22 @@ def api_analyze():
 
     finally:
         if upload_dir:
-            # Keep temporary files around for /api/explain
-            # and /api/source during this demo session.
-            LAST_ANALYSIS["root"] = (
-                upload_dir
-            )
-
+            LAST_ANALYSIS["root"] = upload_dir
         else:
-            LAST_ANALYSIS["root"] = (
-                SAMPLE_REPO
-            )
+            LAST_ANALYSIS["root"] = SAMPLE_REPO
 
-    result["projectName"] = (
-        project_name
-    )
+    result["projectName"] = project_name
 
-    LAST_ANALYSIS["result"] = (
-        result
-    )
+    LAST_ANALYSIS["result"] = result
 
-    return jsonify(
-        result
-    )
+    return jsonify(result)
 
-
-# ---------------------------------------------------------
-# Explain
-# ---------------------------------------------------------
 
 @app.route(
     "/api/explain",
     methods=["POST"]
 )
 def api_explain():
-    """
-    Explain a file.
-
-    Uses a local Ollama server if available.
-    Otherwise falls back to a heuristic summary
-    built from the parsed AST.
-    """
-
     data = (
         request.get_json(
             force=True
@@ -739,20 +593,15 @@ def api_explain():
         or {}
     )
 
-    file_id = data.get(
-        "file"
-    )
+    file_id = data.get("file")
+    client_node = data.get("node") or {}
 
-    result = (
-        LAST_ANALYSIS["result"]
-    )
+    result = LAST_ANALYSIS["result"]
 
-    # The normal path uses the analysis stored on this backend instance.
-    # The frontend also sends the selected node as a fallback so Explain
-    # still works if Render restarted the service between requests.
+    # Render instances can restart between /api/analyze
+    # and /api/explain. In that case use the node supplied
+    # by the frontend instead of failing immediately.
     node = None
-    deps = []
-    used_by = []
 
     if result:
         node = next(
@@ -764,116 +613,200 @@ def api_explain():
             None
         )
 
-        if node:
-            deps = [
-                e["target"]
-                for e in result["edges"]
-                if e["source"] == file_id
-            ]
-
-            used_by = [
-                e["source"]
-                for e in result["edges"]
-                if e["target"] == file_id
-            ]
+    if not node and client_node:
+        node = {
+            "id": client_node.get("id", file_id),
+            "name": client_node.get(
+                "name",
+                file_id or "Selected file"
+            ),
+            "path": client_node.get(
+                "path",
+                file_id or ""
+            ),
+            "type": client_node.get(
+                "type",
+                "file"
+            ),
+            "language": client_node.get(
+                "language",
+                "Unknown"
+            ),
+            "purpose": client_node.get(
+                "purpose",
+                ""
+            ),
+            "classes": client_node.get(
+                "classes",
+                []
+            ),
+            "functions": client_node.get(
+                "functions",
+                []
+            ),
+        }
 
     if not node:
-        supplied_node = data.get("node")
+        if not result:
+            return jsonify({
+                "error":
+                    "Run an analysis first."
+            }), 400
 
-        if isinstance(supplied_node, dict):
-            supplied_id = supplied_node.get("id")
-
-            if supplied_id == file_id:
-                node = supplied_node
-                deps = supplied_node.get("deps") or []
-                used_by = supplied_node.get("usedBy") or []
-
-    if not node:
         return jsonify({
             "error":
-                "The analysis session expired. Please analyze the repository again."
-        }), 400
+                "Unknown file."
+        }), 404
 
-    explanation = (
-        _try_ollama_explain(
+    if result:
+        deps = [
+            e["target"]
+            for e in result["edges"]
+            if e["source"] == file_id
+        ]
+
+        used_by = [
+            e["source"]
+            for e in result["edges"]
+            if e["target"] == file_id
+        ]
+    else:
+        deps = client_node.get("deps", [])
+        used_by = client_node.get("usedBy", [])
+
+    explanation = _try_gemini_explain(
+        node,
+        deps,
+        used_by
+    )
+
+    if not explanation:
+        explanation = _try_ollama_explain(
             node,
             deps,
             used_by
         )
-    )
 
     if not explanation:
-        explanation = (
-            _heuristic_explain(
-                node,
-                deps,
-                used_by
-            )
+        explanation = _heuristic_explain(
+            node,
+            deps,
+            used_by
         )
 
     return jsonify({
-        "explanation":
-            explanation
+        "explanation": explanation
     })
 
 
-# ---------------------------------------------------------
-# Heuristic explanation
-# ---------------------------------------------------------
-
-def _heuristic_explain(
+def _try_gemini_explain(
     node,
     deps,
     used_by
 ):
-    parts = []
+    """
+    Use Gemini when GEMINI_API_KEY is configured on the
+    backend. The key stays server-side and is never exposed
+    to the frontend.
+    """
 
-    if node["purpose"]:
-        parts.append(
-            node["purpose"].rstrip(".")
-        )
+    api_key = os.getenv("GEMINI_API_KEY")
 
-    if node["classes"]:
-        parts.append(
-            f"defines "
-            f"{', '.join(node['classes'][:4])}"
-        )
+    if not api_key:
+        return None
 
-    if node["functions"]:
-        parts.append(
-            f"exposes "
-            f"{', '.join(node['functions'][:4])}"
-        )
+    try:
+        import requests
+    except ImportError:
+        return None
 
-    if deps:
-        parts.append(
-            f"depends on "
-            f"{len(deps)} module(s) "
-            "in this repo"
-        )
-
-    if used_by:
-        parts.append(
-            f"is used by "
-            f"{len(used_by)} other module(s)"
-        )
-
-    if not parts:
-        parts.append(
-            "a supporting module with "
-            "no detected internal dependencies"
-        )
-
-    return (
-        f"{node['name']} "
-        + "; ".join(parts)
-        + "."
+    model = os.getenv(
+        "GEMINI_MODEL",
+        "gemini-3.8-flash"
     )
 
+    prompt = f"""
+You are CodeOrbit, a software architecture assistant.
 
-# ---------------------------------------------------------
-# Ollama explanation
-# ---------------------------------------------------------
+Explain the selected source file in a useful way for a developer.
+
+File name: {node.get("name", "Unknown")}
+Path: {node.get("path", "")}
+Language: {node.get("language", "Unknown")}
+Detected purpose: {node.get("purpose", "")}
+Classes: {node.get("classes", [])}
+Functions: {node.get("functions", [])}
+Internal dependencies: {deps}
+Used by: {used_by}
+
+Write 2 to 4 concise sentences.
+Do not repeat the filename as the explanation.
+Do not invent functionality that is not supported by the supplied information.
+Focus on the file's likely architectural role and how it relates to the rest of the project.
+""".strip()
+
+    url = (
+        "https://generativelanguage.googleapis.com/"
+        f"v1beta/models/{model}:generateContent"
+    )
+
+    try:
+        response = requests.post(
+            url,
+            headers={
+                "x-goog-api-key": api_key,
+                "Content-Type": "application/json",
+            },
+            json={
+                "contents": [
+                    {
+                        "parts": [
+                            {
+                                "text": prompt
+                            }
+                        ]
+                    }
+                ],
+                "generationConfig": {
+                    "temperature": 0.2,
+                    "maxOutputTokens": 180,
+                },
+            },
+            timeout=30,
+        )
+
+        if not response.ok:
+            return None
+
+        payload = response.json()
+
+        candidates = payload.get(
+            "candidates",
+            []
+        )
+
+        if not candidates:
+            return None
+
+        parts = (
+            candidates[0]
+            .get("content", {})
+            .get("parts", [])
+        )
+
+        text_parts = [
+            part.get("text", "").strip()
+            for part in parts
+            if part.get("text")
+        ]
+
+        return " ".join(
+            text_parts
+        ).strip() or None
+
+    except Exception:
+        return None
+
 
 def _try_ollama_explain(
     node,
@@ -882,51 +815,44 @@ def _try_ollama_explain(
 ):
     try:
         import requests
-
     except ImportError:
         return None
 
+    ollama_url = os.getenv(
+        "OLLAMA_URL",
+        "http://localhost:11434/api/generate"
+    )
+
+    ollama_model = os.getenv(
+        "OLLAMA_MODEL",
+        "qwen2.5-coder:3b"
+    )
+
     prompt = (
         f"In two plain sentences, explain the likely role "
-        f"of the file '{node['name']}' in a software "
-        f"architecture. "
-        f"It defines classes: {node['classes']}. "
-        f"It defines functions: {node['functions']}. "
-        f"It imports: {deps}. "
-        f"It is imported by: {used_by}."
+        f"of the file '{node.get('name', 'Unknown')}' in a "
+        f"software architecture. "
+        f"It defines classes: {node.get('classes', [])}. "
+        f"It defines functions: {node.get('functions', [])}. "
+        f"It depends on: {deps}. "
+        f"It is used by: {used_by}."
     )
 
     try:
-        ollama_url = os.getenv(
-            "OLLAMA_URL",
-            "http://localhost:11434/api/generate"
-        )
-
-        ollama_model = os.getenv(
-            "OLLAMA_MODEL",
-            "qwen2.5-coder:3b"
-        )
-
         resp = requests.post(
             ollama_url,
             json={
-                "model":
-                    ollama_model,
-                "prompt":
-                    prompt,
-                "stream":
-                    False,
+                "model": ollama_model,
+                "prompt": prompt,
+                "stream": False,
             },
-            timeout=60,
+            timeout=15,
         )
 
         if resp.ok:
             return (
                 resp.json()
-                .get(
-                    "response",
-                    ""
-                )
+                .get("response", "")
                 .strip()
                 or None
             )
@@ -937,9 +863,109 @@ def _try_ollama_explain(
     return None
 
 
-# ---------------------------------------------------------
-# Start server
-# ---------------------------------------------------------
+def _heuristic_explain(
+    node,
+    deps,
+    used_by
+):
+    name = str(
+        node.get("name")
+        or node.get("id")
+        or "This file"
+    )
+
+    path = str(
+        node.get("path")
+        or name
+    )
+
+    purpose = str(
+        node.get("purpose")
+        or ""
+    ).strip()
+
+    classes = node.get(
+        "classes",
+        []
+    ) or []
+
+    functions = node.get(
+        "functions",
+        []
+    ) or []
+
+    basename = os.path.basename(
+        path
+    ).lower()
+
+    clean_purpose = purpose.rstrip(
+        "."
+    ).strip()
+
+    generic_purposes = {
+        "",
+        name.lower(),
+        path.lower(),
+        basename,
+    }
+
+    parts = []
+
+    if basename in {
+        "run.py",
+        "main.py",
+        "__main__.py",
+        "index.py",
+        "server.py",
+        "app.py",
+    }:
+        parts.append(
+            "serves as an application entry point"
+        )
+    elif clean_purpose.lower() not in generic_purposes:
+        parts.append(
+            clean_purpose
+        )
+
+    if classes:
+        parts.append(
+            f"defines {', '.join(map(str, classes[:4]))}"
+        )
+
+    if functions:
+        parts.append(
+            f"exposes {', '.join(map(str, functions[:4]))}"
+        )
+
+    if deps:
+        parts.append(
+            f"has {len(deps)} detected internal "
+            "dependency connection(s)"
+        )
+
+    if used_by:
+        parts.append(
+            f"is referenced by {len(used_by)} "
+            "other module(s)"
+        )
+
+    if not parts:
+        language = node.get(
+            "language",
+            "the detected language"
+        )
+
+        parts.append(
+            f"is a {language} source file with "
+            "no additional architectural details detected"
+        )
+
+    return (
+        f"{name} "
+        + "; ".join(parts)
+        + "."
+    )
+
 
 if __name__ == "__main__":
     app.run(
