@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>CodeOrbit — Turn Code into Clarity</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ============ SIDEBAR ============ -->
+  <aside class="sidebar">
+    <div class="brand" style="display:flex; align-items:center; justify-content:center; padding:0 0 28px;">
+      <div class="brand-icon" style="width:190px; height:auto; min-height:95px; border-radius:0; background:none; box-shadow:none; display:flex; align-items:center; justify-content:center; color:inherit;">
+        <img
+          src="/assets/logo/codeorbit-mark.png"
+          alt="CodeOrbit"
+          style="display:block; width:190px; height:auto; max-width:100%; object-fit:contain;"
+        >
+      </div>
+    </div>
+
+    <nav class="nav">
+      <a href="#" class="nav-item active" data-nav="analyze">
+        <i data-lucide="home"></i><span>Analyze</span>
+      </a>
+      <a href="#" class="nav-item" data-nav="architecture">
+        <i data-lucide="network"></i><span>Architecture</span>
+      </a>
+      <a href="#" class="nav-item" data-nav="explorer">
+        <i data-lucide="folder"></i><span>File Explorer</span>
+      </a>
+      <a href="#" class="nav-item" data-nav="insights">
+        <i data-lucide="lightbulb"></i><span>Insights</span>
+      </a>
+      <a href="#" class="nav-item" data-nav="docs">
+        <i data-lucide="file-text"></i><span>Documentation</span>
+      </a>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="orbit-art" aria-hidden="true">
+        <div class="orbit-ring"></div>
+        <div class="orbit-dot"></div>
+        <div class="orbit-glow"></div>
+      </div>
+      <h3>Understand Your Codebase Visually</h3>
+      <p>Upload any project and let CodeOrbit map its structure, dependencies and flow using AI.</p>
+    </div>
+  </aside>
+
+  <!-- ============ MAIN ============ -->
+  <div class="main">
+
+    <!-- Top bar -->
+    <header class="topbar">
+      <div class="tabs">
+        <button class="tab active" data-nav="analyze"><i data-lucide="scan-search"></i>Analyze</button>
+        <button class="tab" data-nav="explain"><i data-lucide="circle-help"></i>Explain</button>
+        <button class="tab" data-nav="insights"><i data-lucide="bar-chart-2"></i>Insights</button>
+        <button class="tab" data-nav="docs"><i data-lucide="book-open"></i>Docs</button>
+      </div>
+      <div class="topbar-actions">
+        <button class="icon-btn" id="themeToggleBtn" aria-label="Toggle theme"><i data-lucide="sun"></i></button>
+        <button class="btn btn-primary" id="newAnalysisBtn"><i data-lucide="plus-circle"></i>New Analysis</button>
+      </div>
+    </header>
+
+    <div class="content">
+
+      <!-- Upload panel -->
+      <section class="upload-panel">
+        <div class="upload-left">
+          <div class="upload-cloud"><i data-lucide="upload-cloud"></i></div>
+          <div>
+            <h2>Upload Your Repository</h2>
+            <p>Drag &amp; drop a project folder (ZIP) or paste a GitHub repository link</p>
+            <div class="upload-buttons">
+              <input type="file" id="zipInput" accept=".zip" hidden />
+              <button class="btn btn-primary" id="uploadZipBtn"><i data-lucide="upload"></i>Upload ZIP</button>
+              <button class="btn btn-ghost" id="sampleRepoBtn"><i data-lucide="sparkles"></i>Try Sample Repo</button>
+              <button class="btn btn-ghost" id="githubRepoBtn"><i data-lucide="github"></i>GitHub URL</button>
+            </div>
+            <p class="upload-status" id="uploadStatus"></p>
+          </div>
+        </div>
+        <div class="upload-right">
+          <span class="upload-right-label">Supported Languages</span>
+          <div class="lang-icons">
+            <span class="lang-pill python">
+              <img src="assets/languages/python.svg" alt="Python">
+            </span>
+            <span class="lang-pill javascript">
+              <img src="assets/languages/javascript.svg" alt="JavaScript">
+            </span>
+            <span class="lang-pill typescript">
+              <img src="assets/languages/typescript.svg" alt="TypeScript">
+            </span>
+            <span class="lang-pill rust">
+              <img src="assets/languages/rust.svg" alt="Rust">
+            </span>
+            <span class="lang-pill cpp">
+              <img src="assets/languages/cplusplus.svg" alt="C++">
+            </span>
+            <span class="lang-pill more">•••</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Project header -->
+      <section class="project-header" id="projectHeader" hidden>
+        <div class="project-title">
+          <div class="project-icon"><i data-lucide="file-code-2"></i></div>
+          <div>
+            <div class="project-name-row">
+              <h2 id="projectName">—</h2>
+              <span class="badge badge-success"><i data-lucide="check-circle-2"></i>Analysis Complete</span>
+            </div>
+            <div class="project-meta">
+              <span><i data-lucide="tag"></i><span id="metaLang">—</span></span>
+              <span><i data-lucide="file"></i><span id="metaFiles">—</span> files</span>
+              <span><i data-lucide="box"></i><span id="metaModules">—</span> modules</span>
+              <span><i data-lucide="git-branch"></i><span id="metaDeps">—</span> dependencies</span>
+            </div>
+          </div>
+        </div>
+        <div class="project-actions">
+          <div class="view-as">
+            <span>View as</span>
+            <div class="select-wrap">
+              <select class="select-btn" id="viewAsSelect">
+                <option value="architecture">Architecture Graph</option>
+                <option value="dependency">Dependency Graph</option>
+                <option value="flow">Flow (Mermaid)</option>
+              </select>
+              <i data-lucide="chevron-down"></i>
+            </div>
+          </div>
+          <button class="btn btn-outline" id="exportBtn"><i data-lucide="download"></i>Export</button>
+        </div>
+      </section>
+
+      <!-- Empty state, shown until something has been analyzed -->
+      <section class="empty-state" id="emptyState">
+        <i data-lucide="git-branch-plus"></i>
+        <h3>No repository analyzed yet</h3>
+        <p>Upload a ZIP of your Python or Node.js backend, or try the bundled sample repo above, to generate its architecture graph.</p>
+      </section>
+
+      <!-- Graph + Detail panel -->
+      <section class="workspace" id="workspace" hidden>
+
+        <div class="graph-card">
+          <div class="graph-toolbar">
+            <div class="zoom-controls">
+              <button class="icon-btn sm" id="zoomInBtn" title="Zoom in"><i data-lucide="plus"></i></button>
+              <span class="zoom-level" id="zoomLevel">100%</span>
+              <button class="icon-btn sm" id="zoomOutBtn" title="Zoom out"><i data-lucide="minus"></i></button>
+              <button class="icon-btn sm" id="zoomResetBtn" title="Reset zoom"><i data-lucide="refresh-cw"></i></button>
+              <button class="icon-btn sm" id="fullscreenBtn" title="Fullscreen"><i data-lucide="maximize"></i></button>
+            </div>
+            <div class="graph-modes">
+              <button class="mode-btn active" data-mode="architecture">Architecture</button>
+              <button class="mode-btn" data-mode="dependency">Dependency</button>
+              <button class="mode-btn" data-mode="flow">Flow (Mermaid)</button>
+            </div>
+          </div>
+
+          <div class="graph-canvas" id="graphCanvas">
+            <div class="graph-transform" id="graphTransform">
+              <svg class="connectors" id="connectors" preserveAspectRatio="none"></svg>
+              <div class="node-layer" id="nodeLayer"></div>
+            </div>
+            <p class="dependency-note" id="dependencyNote" hidden>Showing cross-module dependencies only — edges within the same folder are hidden.</p>
+          </div>
+
+          <div class="mermaid-view" id="mermaidView" hidden>
+            <div class="mermaid-toolbar">
+              <span>Mermaid.js architecture code</span>
+              <button class="btn btn-ghost sm" id="copyMermaidBtn"><i data-lucide="copy"></i>Copy code</button>
+            </div>
+            <pre class="mermaid-code" id="mermaidCode"></pre>
+            <div class="mermaid-render" id="mermaidRender"></div>
+          </div>
+        </div>
+
+        <!-- Detail panel -->
+        <aside class="detail-panel" id="detailPanel">
+          <div class="detail-header">
+            <div class="detail-title">
+              <span class="detail-icon" id="detailIcon">🐍</span>
+              <div>
+                <strong id="detailName">Select a node</strong>
+                <span id="detailPath">—</span>
+              </div>
+            </div>
+            <button class="icon-btn sm" id="detailCloseBtn" title="Close panel"><i data-lucide="x"></i></button>
+          </div>
+
+          <div class="detail-tabs">
+            <button class="dtab active" data-dtab="overview">Overview</button>
+            <button class="dtab" data-dtab="code">Code</button>
+            <button class="dtab" data-dtab="dependencies">Dependencies</button>
+            <button class="dtab" data-dtab="usedby">Used By</button>
+          </div>
+
+          <div class="detail-body">
+            <div class="dpane" data-pane="overview">
+              <h4>Purpose</h4>
+              <p class="purpose-text" id="purposeText">Click a node in the graph to inspect it.</p>
+              <h4>Dependencies (<span id="depCount">0</span>)</h4>
+              <ul class="ref-list" id="depList"></ul>
+              <h4>Used By (<span id="usedByCount">0</span>)</h4>
+              <ul class="ref-list" id="usedByList"></ul>
+              <button class="btn btn-explain" id="explainBtn"><i data-lucide="sparkles"></i>Explain with AI</button>
+              <p class="explain-text" id="explainText"></p>
+            </div>
+            <div class="dpane" data-pane="code" hidden>
+              <pre class="code-preview" id="codePreview">// Select a node to preview its source</pre>
+            </div>
+            <div class="dpane" data-pane="dependencies" hidden>
+              <ul class="ref-list" id="depListFull"></ul>
+            </div>
+            <div class="dpane" data-pane="usedby" hidden>
+              <ul class="ref-list" id="usedByListFull"></ul>
+            </div>
+          </div>
+        </aside>
+      </section>
+
+      <!-- Bottom cards -->
+      <section class="bottom-grid" id="bottomGrid" hidden>
+
+        <div class="card">
+          <h3><i data-lucide="clipboard-list"></i>Project Statistics</h3>
+          <div class="stats-grid">
+            <div class="stat">
+              <i data-lucide="file"></i>
+              <strong id="statFiles">0</strong>
+              <span>Files</span>
+            </div>
+            <div class="stat">
+              <i data-lucide="box"></i>
+              <strong id="statModules">0</strong>
+              <span>Modules</span>
+            </div>
+            <div class="stat">
+              <i data-lucide="git-branch"></i>
+              <strong id="statDeps">0</strong>
+              <span>Dependencies</span>
+            </div>
+            <div class="stat">
+              <i data-lucide="wrench"></i>
+              <strong id="statTools">0</strong>
+              <span>Tools</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h3><i data-lucide="lightbulb"></i>Architecture Insights</h3>
+          </div>
+          <ul class="insight-list" id="insightList"></ul>
+        </div>
+
+        <div class="card">
+          <h3><i data-lucide="layers"></i>Technology Stack</h3>
+          <div class="tech-grid" id="techGrid"></div>
+        </div>
+
+      </section>
+    </div>
+  </div>
+</div>
+
+<!-- Reusable modal, used by File Explorer and Documentation -->
+<div class="modal-overlay" id="modalOverlay" hidden>
+  <div class="modal">
+    <div class="modal-header">
+      <strong id="modalTitle">—</strong>
+      <button class="icon-btn sm" id="modalCloseBtn"><i data-lucide="x"></i></button>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+  </div>
+</div>
+
+<script>lucide.createIcons();</script>
+<script src="script.js"></script>
+</body>
+</html>
