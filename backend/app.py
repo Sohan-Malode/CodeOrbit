@@ -620,11 +620,11 @@ def _try_ollama_explain(node, deps, used_by):
         resp = requests.post(
             "http://localhost:11434/api/generate",
             json={
-                "model": "llama3",
+                "model": "qwen2.5-coder:3b",
                 "prompt": prompt,
                 "stream": False,
             },
-            timeout=4,
+            timeout=60,
         )
 
         if resp.ok:
