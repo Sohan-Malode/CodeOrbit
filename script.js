@@ -107,7 +107,6 @@ document.addEventListener("DOMContentLoaded", () => {
     themeToggleBtn.addEventListener("click", toggleTheme);
   }
 
-  // Top tabs + sidebar nav both drive the same in-page navigation.
   document.querySelectorAll(".tabs .tab, .nav-item").forEach(btn => {
     btn.addEventListener("click", (e) => {
       e.preventDefault();
@@ -257,8 +256,6 @@ function applyTheme(theme) {
 
   localStorage.setItem("codeorbit-theme", theme);
 
-  // FIX:
-  // The icon may not exist yet, so don't call setAttribute() on null.
   const icon = document.querySelector("#themeToggleBtn i");
 
   if (icon) {
@@ -428,7 +425,7 @@ function openFileExplorer() {
     const p = el(
       "p",
       {
-        text: "Analyze a repository first — then this shows its real file tree."
+        text: "Analyze a repository first, then this shows its real file tree."
       }
     );
 
@@ -545,7 +542,7 @@ function openFileExplorer() {
 
 
   openModal(
-    `File Explorer — ${state.analysis.projectName}`,
+    `File Explorer: ${state.analysis.projectName}`,
     renderTree(root)
   );
 }
@@ -983,8 +980,6 @@ function renderGraph(data) {
     height + "px";
 
 
-  // In dependency mode, a node with no cross-module
-  // edges is visually de-emphasised rather than removed.
   const connectedInCrossMode =
     new Set();
 
@@ -1263,7 +1258,7 @@ function renderMode() {
         })
         .catch(() => {
           container.textContent =
-            "Diagram could not be rendered — see the code above.";
+            "Diagram could not be rendered. See the code above.";
         });
     }
 
@@ -1482,6 +1477,8 @@ function fillRefList(elId, items) {
 }
 
 
+// ---------- Explain with AI ----------
+
 async function explainSelected() {
   if (!state.selectedNode) {
     return;
@@ -1513,8 +1510,45 @@ async function explainSelected() {
               "application/json"
           },
           body: JSON.stringify({
-            file:
-              state.selectedNode
+            file: state.selectedNode,
+
+            node: (() => {
+              const selected =
+                state.analysis?.nodes?.find(
+                  n => n.id === state.selectedNode
+                );
+
+              if (!selected) {
+                return null;
+              }
+
+              const edges =
+                state.analysis?.edges || [];
+
+              return {
+                ...selected,
+
+                deps: edges
+                  .filter(
+                    e =>
+                      e.source ===
+                      state.selectedNode
+                  )
+                  .map(
+                    e => e.target
+                  ),
+
+                usedBy: edges
+                  .filter(
+                    e =>
+                      e.target ===
+                      state.selectedNode
+                  )
+                  .map(
+                    e => e.source
+                  )
+              };
+            })()
           })
         }
       );
@@ -1536,6 +1570,7 @@ async function explainSelected() {
     );
 
     box.textContent =
+      err?.message ||
       "Could not reach the backend.";
   }
 }

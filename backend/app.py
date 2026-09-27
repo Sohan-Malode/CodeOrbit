@@ -747,38 +747,52 @@ def api_explain():
         LAST_ANALYSIS["result"]
     )
 
-    if not result:
-        return jsonify({
-            "error":
-                "Run an analysis first."
-        }), 400
+    # The normal path uses the analysis stored on this backend instance.
+    # The frontend also sends the selected node as a fallback so Explain
+    # still works if Render restarted the service between requests.
+    node = None
+    deps = []
+    used_by = []
 
-    node = next(
-        (
-            n
-            for n in result["nodes"]
-            if n["id"] == file_id
-        ),
-        None
-    )
+    if result:
+        node = next(
+            (
+                n
+                for n in result["nodes"]
+                if n["id"] == file_id
+            ),
+            None
+        )
+
+        if node:
+            deps = [
+                e["target"]
+                for e in result["edges"]
+                if e["source"] == file_id
+            ]
+
+            used_by = [
+                e["source"]
+                for e in result["edges"]
+                if e["target"] == file_id
+            ]
+
+    if not node:
+        supplied_node = data.get("node")
+
+        if isinstance(supplied_node, dict):
+            supplied_id = supplied_node.get("id")
+
+            if supplied_id == file_id:
+                node = supplied_node
+                deps = supplied_node.get("deps") or []
+                used_by = supplied_node.get("usedBy") or []
 
     if not node:
         return jsonify({
             "error":
-                "Unknown file."
-        }), 404
-
-    deps = [
-        e["target"]
-        for e in result["edges"]
-        if e["source"] == file_id
-    ]
-
-    used_by = [
-        e["source"]
-        for e in result["edges"]
-        if e["target"] == file_id
-    ]
+                "The analysis session expired. Please analyze the repository again."
+        }), 400
 
     explanation = (
         _try_ollama_explain(
@@ -883,11 +897,21 @@ def _try_ollama_explain(
     )
 
     try:
+        ollama_url = os.getenv(
+            "OLLAMA_URL",
+            "http://localhost:11434/api/generate"
+        )
+
+        ollama_model = os.getenv(
+            "OLLAMA_MODEL",
+            "qwen2.5-coder:3b"
+        )
+
         resp = requests.post(
-            "http://localhost:11434/api/generate",
+            ollama_url,
             json={
                 "model":
-                    "qwen2.5-coder:3b",
+                    ollama_model,
                 "prompt":
                     prompt,
                 "stream":
