@@ -2,6 +2,9 @@
 // /api/explain endpoints and renders the result. No hardcoded graph data
 // lives here; everything comes from the real repository analysis.
 
+// Render backend used by the GitHub Pages frontend.
+const API_BASE_URL = "https://codeorbit-backend-0t15.onrender.com";
+
 const state = {
   analysis: null,
   selectedNode: null,
@@ -710,13 +713,13 @@ async function analyze({ file, sample, githubUrl }) {
 
       form.append("repo", file);
 
-      res = await fetch("/api/analyze", {
+      res = await fetch(`${API_BASE_URL}/api/analyze`, {
         method: "POST",
         body: form
       });
 
     } else if (githubUrl) {
-      res = await fetch("/api/analyze", {
+      res = await fetch(`${API_BASE_URL}/api/analyze`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -727,7 +730,7 @@ async function analyze({ file, sample, githubUrl }) {
       });
 
     } else {
-      res = await fetch("/api/analyze", {
+      res = await fetch(`${API_BASE_URL}/api/analyze`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -1502,7 +1505,7 @@ async function explainSelected() {
   try {
     const res =
       await fetch(
-        "/api/explain",
+        `${API_BASE_URL}/api/explain`,
         {
           method: "POST",
           headers: {
