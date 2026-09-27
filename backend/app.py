@@ -768,8 +768,10 @@ Focus on the file's likely architectural role and how it relates to the rest of 
                     }
                 ],
                 "generationConfig": {
-                    "temperature": 0.2,
-                    "maxOutputTokens": 180,
+                    "thinkingConfig": {
+                        "thinkingLevel": "low"
+                    },
+                    "maxOutputTokens": 512
                 },
             },
             timeout=30,
