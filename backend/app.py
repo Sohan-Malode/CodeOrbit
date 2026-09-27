@@ -20,6 +20,7 @@ from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 
 from flask import Flask, jsonify, request, send_from_directory
+from flask_cors import CORS
 
 from analyzer import analyze_repo
 
@@ -37,7 +38,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # ├── script.js
 # ├── styles.css
 # └── backend/
-#
+
 FRONTEND_DIR = os.path.abspath(os.path.join(BASE_DIR, ".."))
 
 SAMPLE_REPO = os.path.join(BASE_DIR, "sample_repo")
@@ -46,7 +47,6 @@ SAMPLE_REPO = os.path.join(BASE_DIR, "sample_repo")
 # ---------------------------------------------------------
 # Sample repository name detection
 # ---------------------------------------------------------
-
 
 def _parse_github_url(github_url):
     """Validate a GitHub repository URL and return (owner, repo)."""
@@ -86,7 +86,11 @@ def _parse_github_url(github_url):
 
 def _github_default_branch(owner, repo):
     """Get the default branch for a public GitHub repository."""
-    api_url = f"https://api.github.com/repos/{quote(owner)}/{quote(repo)}"
+    api_url = (
+        f"https://api.github.com/repos/"
+        f"{quote(owner)}/{quote(repo)}"
+    )
+
     req = Request(
         api_url,
         headers={
@@ -96,19 +100,27 @@ def _github_default_branch(owner, repo):
     )
 
     with urlopen(req, timeout=15) as response:
-        data = json.loads(response.read().decode("utf-8"))
+        data = json.loads(
+            response.read().decode("utf-8")
+        )
 
     branch = data.get("default_branch")
+
     if not branch:
-        raise ValueError("GitHub did not provide a default branch for that repository.")
+        raise ValueError(
+            "GitHub did not provide a default branch for that repository."
+        )
 
     return branch
 
 
 def _download_github_repo(github_url):
     """
-    Download a public GitHub repository as a ZIP archive and extract it.
-    Returns (temporary_directory, repository_root, project_name).
+    Download a public GitHub repository as a ZIP archive
+    and extract it.
+
+    Returns:
+        (temporary_directory, repository_root, project_name)
     """
     parsed = _parse_github_url(github_url)
 
@@ -122,22 +134,43 @@ def _download_github_repo(github_url):
 
     try:
         branch = _github_default_branch(owner, repo)
+
     except HTTPError as exc:
         if exc.code == 404:
-            raise ValueError("That GitHub repository was not found or is not public.")
-        raise ValueError(f"GitHub returned HTTP {exc.code} while looking up the repository.")
+            raise ValueError(
+                "That GitHub repository was not found or is not public."
+            )
+
+        raise ValueError(
+            f"GitHub returned HTTP {exc.code} "
+            "while looking up the repository."
+        )
+
     except URLError:
-        raise ValueError("Could not reach GitHub. Check your internet connection and try again.")
+        raise ValueError(
+            "Could not reach GitHub. "
+            "Check your internet connection and try again."
+        )
+
     except TimeoutError:
-        raise ValueError("GitHub took too long to respond. Please try again.")
+        raise ValueError(
+            "GitHub took too long to respond. "
+            "Please try again."
+        )
 
     download_url = (
         f"https://github.com/{quote(owner)}/{quote(repo)}"
         f"/archive/refs/heads/{quote(branch, safe='')}.zip"
     )
 
-    upload_dir = tempfile.mkdtemp(prefix="codeorbit_github_")
-    zip_path = os.path.join(upload_dir, "repo.zip")
+    upload_dir = tempfile.mkdtemp(
+        prefix="codeorbit_github_"
+    )
+
+    zip_path = os.path.join(
+        upload_dir,
+        "repo.zip"
+    )
 
     try:
         req = Request(
@@ -147,24 +180,47 @@ def _download_github_repo(github_url):
             }
         )
 
-        with urlopen(req, timeout=60) as response, open(zip_path, "wb") as output:
-            shutil.copyfileobj(response, output)
+        with (
+            urlopen(req, timeout=60) as response,
+            open(zip_path, "wb") as output
+        ):
+            shutil.copyfileobj(
+                response,
+                output
+            )
 
         with zipfile.ZipFile(zip_path) as zf:
-            base_path = os.path.realpath(upload_dir)
+            base_path = os.path.realpath(
+                upload_dir
+            )
 
+            # Validate archive paths before extraction.
             for member in zf.infolist():
                 target = os.path.realpath(
-                    os.path.join(upload_dir, member.filename)
+                    os.path.join(
+                        upload_dir,
+                        member.filename
+                    )
                 )
 
-                if not (target == base_path or target.startswith(base_path + os.sep)):
-                    raise ValueError("GitHub archive contains an unsafe file path.")
+                if not (
+                    target == base_path
+                    or target.startswith(
+                        base_path + os.sep
+                    )
+                ):
+                    raise ValueError(
+                        "GitHub archive contains "
+                        "an unsafe file path."
+                    )
 
             zf.extractall(upload_dir)
 
     except HTTPError as exc:
-        shutil.rmtree(upload_dir, ignore_errors=True)
+        shutil.rmtree(
+            upload_dir,
+            ignore_errors=True
+        )
 
         if exc.code == 404:
             raise ValueError(
@@ -172,15 +228,37 @@ def _download_github_repo(github_url):
                 "The repository may be empty or unavailable."
             )
 
-        raise ValueError(f"GitHub returned HTTP {exc.code} while downloading the repository.")
+        raise ValueError(
+            f"GitHub returned HTTP {exc.code} "
+            "while downloading the repository."
+        )
+
     except URLError:
-        shutil.rmtree(upload_dir, ignore_errors=True)
-        raise ValueError("Could not download the repository from GitHub.")
+        shutil.rmtree(
+            upload_dir,
+            ignore_errors=True
+        )
+
+        raise ValueError(
+            "Could not download the repository from GitHub."
+        )
+
     except zipfile.BadZipFile:
-        shutil.rmtree(upload_dir, ignore_errors=True)
-        raise ValueError("GitHub returned an invalid repository archive.")
+        shutil.rmtree(
+            upload_dir,
+            ignore_errors=True
+        )
+
+        raise ValueError(
+            "GitHub returned an invalid repository archive."
+        )
+
     except Exception:
-        shutil.rmtree(upload_dir, ignore_errors=True)
+        shutil.rmtree(
+            upload_dir,
+            ignore_errors=True
+        )
+
         raise
 
     try:
@@ -194,12 +272,25 @@ def _download_github_repo(github_url):
         if not entry.startswith("__MACOSX")
     ]
 
-    if len(entries) == 1 and os.path.isdir(os.path.join(upload_dir, entries[0])):
-        root = os.path.join(upload_dir, entries[0])
+    if (
+        len(entries) == 1
+        and os.path.isdir(
+            os.path.join(
+                upload_dir,
+                entries[0]
+            )
+        )
+    ):
+        root = os.path.join(
+            upload_dir,
+            entries[0]
+        )
+
     else:
         root = upload_dir
 
     return upload_dir, root, repo
+
 
 def get_sample_project_name(root):
     """
@@ -217,7 +308,10 @@ def get_sample_project_name(root):
     # 1. pyproject.toml
     # -----------------------------------------------------
 
-    pyproject_path = os.path.join(root, "pyproject.toml")
+    pyproject_path = os.path.join(
+        root,
+        "pyproject.toml"
+    )
 
     if os.path.isfile(pyproject_path):
         try:
@@ -246,7 +340,10 @@ def get_sample_project_name(root):
     # 2. package.json
     # -----------------------------------------------------
 
-    package_json_path = os.path.join(root, "package.json")
+    package_json_path = os.path.join(
+        root,
+        "package.json"
+    )
 
     if os.path.isfile(package_json_path):
         try:
@@ -269,7 +366,10 @@ def get_sample_project_name(root):
     # 3. README.md
     # -----------------------------------------------------
 
-    readme_path = os.path.join(root, "README.md")
+    readme_path = os.path.join(
+        root,
+        "README.md"
+    )
 
     if os.path.isfile(readme_path):
         try:
@@ -302,7 +402,10 @@ def get_sample_project_name(root):
     # 4. setup.py
     # -----------------------------------------------------
 
-    setup_path = os.path.join(root, "setup.py")
+    setup_path = os.path.join(
+        root,
+        "setup.py"
+    )
 
     if os.path.isfile(setup_path):
         try:
@@ -335,7 +438,33 @@ def get_sample_project_name(root):
 # Flask
 # ---------------------------------------------------------
 
-app = Flask(__name__, static_folder=None)
+app = Flask(
+    __name__,
+    static_folder=None
+)
+
+
+# ---------------------------------------------------------
+# CORS
+# ---------------------------------------------------------
+#
+# The frontend is hosted on GitHub Pages while the Flask
+# backend is hosted on Render. Because these are different
+# origins, the browser requires CORS permission.
+#
+# Only the CodeOrbit GitHub Pages origin is allowed.
+# ---------------------------------------------------------
+
+CORS(
+    app,
+    resources={
+        r"/api/*": {
+            "origins": [
+                "https://sohan-malode.github.io"
+            ]
+        }
+    }
+)
 
 
 # Holds the most recent analysis so /api/explain can
@@ -343,6 +472,7 @@ app = Flask(__name__, static_folder=None)
 # the whole repo.
 #
 # Fine for a single-user hackathon demo.
+
 LAST_ANALYSIS = {
     "root": None,
     "result": None,
@@ -355,19 +485,28 @@ LAST_ANALYSIS = {
 
 @app.route("/")
 def index():
-    return send_from_directory(FRONTEND_DIR, "index.html")
+    return send_from_directory(
+        FRONTEND_DIR,
+        "index.html"
+    )
 
 
 @app.route("/<path:filename>")
 def static_files(filename):
-    return send_from_directory(FRONTEND_DIR, filename)
+    return send_from_directory(
+        FRONTEND_DIR,
+        filename
+    )
 
 
 # ---------------------------------------------------------
 # API
 # ---------------------------------------------------------
 
-@app.route("/api/analyze", methods=["POST"])
+@app.route(
+    "/api/analyze",
+    methods=["POST"]
+)
 def api_analyze():
     upload_dir = None
     project_name = "repository"
@@ -377,32 +516,56 @@ def api_analyze():
     # ZIP upload
     # -----------------------------------------------------
 
-    if request.content_type and "multipart/form-data" in request.content_type:
+    if (
+        request.content_type
+        and "multipart/form-data"
+        in request.content_type
+    ):
         file = request.files.get("repo")
 
-        if not file or not file.filename.endswith(".zip"):
+        if (
+            not file
+            or not file.filename.endswith(".zip")
+        ):
             return jsonify({
-                "error": "Please upload a .zip file of your repository."
+                "error":
+                    "Please upload a .zip file "
+                    "of your repository."
             }), 400
 
-        upload_dir = tempfile.mkdtemp(prefix="codeorbit_")
+        upload_dir = tempfile.mkdtemp(
+            prefix="codeorbit_"
+        )
 
-        zip_path = os.path.join(upload_dir, "repo.zip")
+        zip_path = os.path.join(
+            upload_dir,
+            "repo.zip"
+        )
+
         file.save(zip_path)
 
         project_name = os.path.splitext(
-            os.path.basename(file.filename)
+            os.path.basename(
+                file.filename
+            )
         )[0]
 
         try:
             with zipfile.ZipFile(zip_path) as zf:
-                zf.extractall(upload_dir)
+                zf.extractall(
+                    upload_dir
+                )
 
         except zipfile.BadZipFile:
-            shutil.rmtree(upload_dir, ignore_errors=True)
+            shutil.rmtree(
+                upload_dir,
+                ignore_errors=True
+            )
 
             return jsonify({
-                "error": "That file isn't a valid .zip archive."
+                "error":
+                    "That file isn't a valid "
+                    ".zip archive."
             }), 400
 
         os.remove(zip_path)
@@ -410,15 +573,25 @@ def api_analyze():
         # If the ZIP contains one top-level folder,
         # analyze inside that folder.
         entries = [
-            e for e in os.listdir(upload_dir)
+            e
+            for e in os.listdir(upload_dir)
             if not e.startswith("__MACOSX")
         ]
 
         if (
             len(entries) == 1
-            and os.path.isdir(os.path.join(upload_dir, entries[0]))
+            and os.path.isdir(
+                os.path.join(
+                    upload_dir,
+                    entries[0]
+                )
+            )
         ):
-            root = os.path.join(upload_dir, entries[0])
+            root = os.path.join(
+                upload_dir,
+                entries[0]
+            )
+
             project_name = entries[0]
 
         else:
@@ -428,33 +601,65 @@ def api_analyze():
     # GitHub repository
     # -----------------------------------------------------
 
-    elif request.is_json and request.get_json(silent=True):
-        data = request.get_json(silent=True) or {}
-        github_url = data.get("github_url")
+    elif (
+        request.is_json
+        and request.get_json(silent=True)
+    ):
+        data = (
+            request.get_json(
+                silent=True
+            )
+            or {}
+        )
+
+        github_url = data.get(
+            "github_url"
+        )
 
         if github_url:
             try:
-                upload_dir, root, project_name = _download_github_repo(
+                (
+                    upload_dir,
+                    root,
+                    project_name
+                ) = _download_github_repo(
                     github_url
                 )
+
             except ValueError as exc:
-                return jsonify({"error": str(exc)}), 400
+                return jsonify({
+                    "error": str(exc)
+                }), 400
+
             except Exception as exc:
                 return jsonify({
-                    "error": f"Could not download the GitHub repository: {exc}"
+                    "error":
+                        "Could not download the "
+                        f"GitHub repository: {exc}"
                 }), 500
 
-            detected_name = get_sample_project_name(root)
+            detected_name = (
+                get_sample_project_name(root)
+            )
 
-            if detected_name != "Sample Repository":
+            if (
+                detected_name
+                != "Sample Repository"
+            ):
                 project_name = detected_name
 
         else:
             # -----------------------------------------------------
             # Sample repository
             # -----------------------------------------------------
+
             root = SAMPLE_REPO
-            project_name = get_sample_project_name(root)
+
+            project_name = (
+                get_sample_project_name(
+                    root
+                )
+            )
 
     # -----------------------------------------------------
     # Sample repository
@@ -462,40 +667,62 @@ def api_analyze():
 
     else:
         root = SAMPLE_REPO
-        project_name = get_sample_project_name(root)
+
+        project_name = (
+            get_sample_project_name(
+                root
+            )
+        )
 
     # -----------------------------------------------------
     # Analyze
     # -----------------------------------------------------
 
     try:
-        result = analyze_repo(root)
+        result = analyze_repo(
+            root
+        )
 
     except Exception as exc:
         return jsonify({
-            "error": f"Analysis failed: {exc}"
+            "error":
+                f"Analysis failed: {exc}"
         }), 500
 
     finally:
         if upload_dir:
             # Keep temporary files around for /api/explain
             # and /api/source during this demo session.
-            LAST_ANALYSIS["root"] = upload_dir
+            LAST_ANALYSIS["root"] = (
+                upload_dir
+            )
+
         else:
-            LAST_ANALYSIS["root"] = SAMPLE_REPO
+            LAST_ANALYSIS["root"] = (
+                SAMPLE_REPO
+            )
 
-    result["projectName"] = project_name
+    result["projectName"] = (
+        project_name
+    )
 
-    LAST_ANALYSIS["result"] = result
+    LAST_ANALYSIS["result"] = (
+        result
+    )
 
-    return jsonify(result)
+    return jsonify(
+        result
+    )
 
 
 # ---------------------------------------------------------
 # Explain
 # ---------------------------------------------------------
 
-@app.route("/api/explain", methods=["POST"])
+@app.route(
+    "/api/explain",
+    methods=["POST"]
+)
 def api_explain():
     """
     Explain a file.
@@ -505,25 +732,40 @@ def api_explain():
     built from the parsed AST.
     """
 
-    data = request.get_json(force=True) or {}
+    data = (
+        request.get_json(
+            force=True
+        )
+        or {}
+    )
 
-    file_id = data.get("file")
+    file_id = data.get(
+        "file"
+    )
 
-    result = LAST_ANALYSIS["result"]
+    result = (
+        LAST_ANALYSIS["result"]
+    )
 
     if not result:
         return jsonify({
-            "error": "Run an analysis first."
+            "error":
+                "Run an analysis first."
         }), 400
 
     node = next(
-        (n for n in result["nodes"] if n["id"] == file_id),
+        (
+            n
+            for n in result["nodes"]
+            if n["id"] == file_id
+        ),
         None
     )
 
     if not node:
         return jsonify({
-            "error": "Unknown file."
+            "error":
+                "Unknown file."
         }), 404
 
     deps = [
@@ -538,21 +780,26 @@ def api_explain():
         if e["target"] == file_id
     ]
 
-    explanation = _try_ollama_explain(
-        node,
-        deps,
-        used_by
-    )
-
-    if not explanation:
-        explanation = _heuristic_explain(
+    explanation = (
+        _try_ollama_explain(
             node,
             deps,
             used_by
         )
+    )
+
+    if not explanation:
+        explanation = (
+            _heuristic_explain(
+                node,
+                deps,
+                used_by
+            )
+        )
 
     return jsonify({
-        "explanation": explanation
+        "explanation":
+            explanation
     })
 
 
@@ -560,7 +807,11 @@ def api_explain():
 # Heuristic explanation
 # ---------------------------------------------------------
 
-def _heuristic_explain(node, deps, used_by):
+def _heuristic_explain(
+    node,
+    deps,
+    used_by
+):
     parts = []
 
     if node["purpose"]:
@@ -570,37 +821,51 @@ def _heuristic_explain(node, deps, used_by):
 
     if node["classes"]:
         parts.append(
-            f"defines {', '.join(node['classes'][:4])}"
+            f"defines "
+            f"{', '.join(node['classes'][:4])}"
         )
 
     if node["functions"]:
         parts.append(
-            f"exposes {', '.join(node['functions'][:4])}"
+            f"exposes "
+            f"{', '.join(node['functions'][:4])}"
         )
 
     if deps:
         parts.append(
-            f"depends on {len(deps)} module(s) in this repo"
+            f"depends on "
+            f"{len(deps)} module(s) "
+            "in this repo"
         )
 
     if used_by:
         parts.append(
-            f"is used by {len(used_by)} other module(s)"
+            f"is used by "
+            f"{len(used_by)} other module(s)"
         )
 
     if not parts:
         parts.append(
-            "a supporting module with no detected internal dependencies"
+            "a supporting module with "
+            "no detected internal dependencies"
         )
 
-    return f"{node['name']} " + "; ".join(parts) + "."
+    return (
+        f"{node['name']} "
+        + "; ".join(parts)
+        + "."
+    )
 
 
 # ---------------------------------------------------------
 # Ollama explanation
 # ---------------------------------------------------------
 
-def _try_ollama_explain(node, deps, used_by):
+def _try_ollama_explain(
+    node,
+    deps,
+    used_by
+):
     try:
         import requests
 
@@ -608,10 +873,11 @@ def _try_ollama_explain(node, deps, used_by):
         return None
 
     prompt = (
-        f"In two plain sentences, explain the likely role of "
-        f"the file '{node['name']}' in a software architecture. "
-        f"It defines classes: {node['classes']}, "
-        f"functions: {node['functions']}. "
+        f"In two plain sentences, explain the likely role "
+        f"of the file '{node['name']}' in a software "
+        f"architecture. "
+        f"It defines classes: {node['classes']}. "
+        f"It defines functions: {node['functions']}. "
         f"It imports: {deps}. "
         f"It is imported by: {used_by}."
     )
@@ -620,9 +886,12 @@ def _try_ollama_explain(node, deps, used_by):
         resp = requests.post(
             "http://localhost:11434/api/generate",
             json={
-                "model": "qwen2.5-coder:3b",
-                "prompt": prompt,
-                "stream": False,
+                "model":
+                    "qwen2.5-coder:3b",
+                "prompt":
+                    prompt,
+                "stream":
+                    False,
             },
             timeout=60,
         )
@@ -630,7 +899,10 @@ def _try_ollama_explain(node, deps, used_by):
         if resp.ok:
             return (
                 resp.json()
-                .get("response", "")
+                .get(
+                    "response",
+                    ""
+                )
                 .strip()
                 or None
             )
