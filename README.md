@@ -1,53 +1,96 @@
 # CodeOrbit
 
-AI-powered code repository architecture visualizer and analyzer.
+### Turn Code into Clarity
 
-CodeOrbit analyzes software repositories and transforms their code structure into interactive architecture and dependency views. It helps developers understand how files, modules, functions, and dependencies are connected.
+CodeOrbit is an AI-powered code repository architecture visualizer and analyzer.
+
+It analyzes an existing backend repository, extracts its structure and dependencies, dynamically generates Mermaid.js architecture code, and transforms the results into an interactive visual representation of the system.
+
+Developers can explore files, dependencies, architecture relationships, project statistics, and use AI to understand the role of individual components.
+
+---
+
+## Problem Statement
+
+### Code-to-Diagram Architecture Visualizer
+
+Onboarding developers to an existing codebase can be difficult because system architecture documentation is often incomplete or outdated.
+
+CodeOrbit addresses this by automatically analyzing a provided backend repository and converting its code structure and dependencies into a visual architecture representation.
+
+The system can:
+
+- Read a provided repository
+- Detect source files and project structure
+- Analyze dependencies and relationships
+- Generate Mermaid.js architecture code automatically
+- Render the architecture dynamically
+- Allow developers to explore individual files
+- Provide AI-powered explanations of selected components
+
+---
 
 ## Features
 
-- 📦 Analyze local ZIP repositories
+- 📦 Analyze repositories from ZIP files
 - 🔗 Analyze public GitHub repositories
-- 🏗️ Interactive Architecture Graph
-- 🔗 Dependency Graph
-- 🔄 Mermaid Flow Diagram
+- 🧪 Analyze the included sample repository
+- 🏗️ Interactive architecture visualization
+- 🔀 Dependency relationship visualization
+- 🌐 Automatic Mermaid.js architecture generation
+- 📈 Dynamic Mermaid architecture rendering
 - 📁 File Explorer
-- 📄 File-level code and dependency details
-- 🤖 AI-powered file explanations using Ollama
-- 📊 Project insights and statistics
-- 💾 Export analysis results
-- 🎨 Modern dark-themed interface
+- 🔎 Source code preview
+- 📄 File-level dependency information
+- 🤖 AI-powered architectural explanations
+- 📊 Project statistics and architecture insights
+- 💾 Export analysis results as JSON
+- 🌙 Dark and light themes
+- 💻 Programming language detection
+- 🧩 Folder and module organization
+- 🔗 File-to-file dependency mapping
 
-## Tech Stack
+---
 
-### Frontend
-- HTML
-- CSS
-- JavaScript
+## How It Works
 
-### Backend
-- Python
-- Flask
-- AST-based Python code analysis
-
-### AI
-- Ollama
-- Qwen 2.5 Coder 3B
-
-## Project Structure
+CodeOrbit converts a repository into an interactive architecture model through several stages.
 
 ```text
-CodeOrbit/
-├── assets/
-│   ├── languages/
-│   └── logo/
-├── backend/
-│   ├── analyzer.py
-│   ├── app.py
-│   ├── requirements.txt
-│   └── sample_repo/
-├── index.html
-├── script.js
-├── styles.css
-├── .gitignore
-└── README.md
+Repository
+    │
+    ├── ZIP Upload
+    │
+    └── Public GitHub Repository
+            │
+            ▼
+     Repository Analyzer
+            │
+            ▼
+      Source File Detection
+            │
+            ▼
+    Dependency Extraction
+            │
+            ▼
+     Architecture Graph
+            │
+       ┌────┴────┐
+       ▼         ▼
+     Nodes      Edges
+       │         │
+       └────┬────┘
+            ▼
+   Mermaid.js Generation
+            │
+            ▼
+  Dynamic Architecture View
+            │
+            ▼
+    Select a Component
+            │
+            ▼
+       Gemini AI
+            │
+            ▼
+ Architectural Explanation
