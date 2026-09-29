@@ -372,16 +372,41 @@ app = Flask(
 )
 
 
+ALLOWED_ORIGINS = {
+    "https://sohan-malode.github.io",
+    "http://localhost:5000",
+    "http://127.0.0.1:5000",
+}
+
+
 CORS(
     app,
     resources={
         r"/api/*": {
-            "origins": [
-                "https://sohan-malode.github.io"
-            ]
+            "origins": list(ALLOWED_ORIGINS),
+            "methods": ["GET", "POST", "OPTIONS"],
+            "allow_headers": ["Content-Type"],
+            "max_age": 600,
         }
-    }
+    },
 )
+
+
+@app.after_request
+def add_cors_headers(response):
+    """
+    Ensure API responses always include the CORS header for
+    approved frontend origins, including error responses.
+    """
+    origin = request.headers.get("Origin")
+
+    if origin in ALLOWED_ORIGINS and request.path.startswith("/api/"):
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Vary"] = "Origin"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+
+    return response
 
 
 LAST_ANALYSIS = {
@@ -705,11 +730,17 @@ def _try_gemini_explain(
     used_by
 ):
     """
-    Use Gemini when GEMINI_API_KEY is configured on the
-    backend. The key stays server-side and is never exposed
-    to the frontend.
-    """
+    Use Gemini to produce a structured architecture explanation.
 
+    The response is normalized into:
+      role
+      purpose
+      dependencies
+      how_it_fits
+
+    Dependencies come from CodeOrbit's analyzed dependency graph rather
+    than being invented by the model.
+    """
     api_key = os.getenv("GEMINI_API_KEY")
 
     if not api_key:
@@ -725,10 +756,14 @@ def _try_gemini_explain(
         "gemini-3.8-flash"
     )
 
+    dependency_text = ", ".join(deps) if deps else "None detected"
+    used_by_text = ", ".join(used_by) if used_by else "None detected"
+
     prompt = f"""
 You are CodeOrbit, a software architecture assistant.
 
-Explain the selected source file in a useful way for a developer.
+Analyze the selected source file using ONLY the supplied repository-analysis
+information. Do not invent implementation details.
 
 File name: {node.get("name", "Unknown")}
 Path: {node.get("path", "")}
@@ -736,13 +771,22 @@ Language: {node.get("language", "Unknown")}
 Detected purpose: {node.get("purpose", "")}
 Classes: {node.get("classes", [])}
 Functions: {node.get("functions", [])}
-Internal dependencies: {deps}
-Used by: {used_by}
+Internal dependencies detected by CodeOrbit: {dependency_text}
+Files/modules that use this file: {used_by_text}
 
-Write 2 to 4 concise sentences.
-Do not repeat the filename as the explanation.
-Do not invent functionality that is not supported by the supplied information.
-Focus on the file's likely architectural role and how it relates to the rest of the project.
+Return ONLY valid JSON with exactly these three string fields:
+{{
+  "role": "short architectural role",
+  "purpose": "one concise sentence describing what the file does",
+  "how_it_fits": "one concise sentence describing how this file fits into the architecture"
+}}
+
+Rules:
+- Keep the role short, usually 2 to 5 words.
+- Base the role and purpose on the supplied information.
+- Do not invent APIs, classes, functions, or behavior.
+- If the information is limited, use cautious wording.
+- Do not include Markdown fences.
 """.strip()
 
     url = (
@@ -771,7 +815,7 @@ Focus on the file's likely architectural role and how it relates to the rest of 
                     "thinkingConfig": {
                         "thinkingLevel": "low"
                     },
-                    "maxOutputTokens": 512
+                    "maxOutputTokens": 512,
                 },
             },
             timeout=30,
@@ -802,9 +846,44 @@ Focus on the file's likely architectural role and how it relates to the rest of 
             if part.get("text")
         ]
 
-        return " ".join(
-            text_parts
-        ).strip() or None
+        raw_text = "\n".join(text_parts).strip()
+
+        if not raw_text:
+            return None
+
+        # Be tolerant if the model returns a JSON code fence despite
+        # being instructed not to.
+        if raw_text.startswith("```"):
+            raw_text = re.sub(
+                r"^```(?:json)?\s*|\s*```$",
+                "",
+                raw_text,
+                flags=re.IGNORECASE
+            ).strip()
+
+        parsed = json.loads(raw_text)
+
+        role = str(
+            parsed.get("role", "")
+        ).strip()
+
+        purpose = str(
+            parsed.get("purpose", "")
+        ).strip()
+
+        how_it_fits = str(
+            parsed.get("how_it_fits", "")
+        ).strip()
+
+        if not role or not purpose or not how_it_fits:
+            return None
+
+        return {
+            "role": role,
+            "purpose": purpose,
+            "dependencies": list(deps),
+            "how_it_fits": how_it_fits,
+        }
 
     except Exception:
         return None
@@ -830,15 +909,25 @@ def _try_ollama_explain(
         "qwen2.5-coder:3b"
     )
 
-    prompt = (
-        f"In two plain sentences, explain the likely role "
-        f"of the file '{node.get('name', 'Unknown')}' in a "
-        f"software architecture. "
-        f"It defines classes: {node.get('classes', [])}. "
-        f"It defines functions: {node.get('functions', [])}. "
-        f"It depends on: {deps}. "
-        f"It is used by: {used_by}."
-    )
+    prompt = f"""
+Return ONLY valid JSON with exactly these fields:
+{{
+  "role": "short architectural role",
+  "purpose": "one concise sentence describing what the file does",
+  "how_it_fits": "one concise sentence describing how it fits into the architecture"
+}}
+
+Selected file: {node.get("name", "Unknown")}
+Path: {node.get("path", "")}
+Language: {node.get("language", "Unknown")}
+Detected purpose: {node.get("purpose", "")}
+Classes: {node.get("classes", [])}
+Functions: {node.get("functions", [])}
+Internal dependencies: {deps}
+Used by: {used_by}
+
+Do not invent functionality.
+""".strip()
 
     try:
         resp = requests.post(
@@ -851,18 +940,52 @@ def _try_ollama_explain(
             timeout=15,
         )
 
-        if resp.ok:
-            return (
-                resp.json()
-                .get("response", "")
-                .strip()
-                or None
-            )
+        if not resp.ok:
+            return None
+
+        raw_text = (
+            resp.json()
+            .get("response", "")
+            .strip()
+        )
+
+        if not raw_text:
+            return None
+
+        if raw_text.startswith("```"):
+            raw_text = re.sub(
+                r"^```(?:json)?\s*|\s*```$",
+                "",
+                raw_text,
+                flags=re.IGNORECASE
+            ).strip()
+
+        parsed = json.loads(raw_text)
+
+        role = str(
+            parsed.get("role", "")
+        ).strip()
+
+        purpose = str(
+            parsed.get("purpose", "")
+        ).strip()
+
+        how_it_fits = str(
+            parsed.get("how_it_fits", "")
+        ).strip()
+
+        if not role or not purpose or not how_it_fits:
+            return None
+
+        return {
+            "role": role,
+            "purpose": purpose,
+            "dependencies": list(deps),
+            "how_it_fits": how_it_fits,
+        }
 
     except Exception:
         return None
-
-    return None
 
 
 def _heuristic_explain(
@@ -904,69 +1027,128 @@ def _heuristic_explain(
         "."
     ).strip()
 
-    generic_purposes = {
-        "",
-        name.lower(),
-        path.lower(),
-        basename,
-    }
-
-    parts = []
-
-    if basename in {
+    entry_files = {
         "run.py",
         "main.py",
         "__main__.py",
         "index.py",
         "server.py",
         "app.py",
-    }:
-        parts.append(
-            "serves as an application entry point"
+        "index.js",
+        "server.js",
+        "app.js",
+        "main.js",
+        "index.ts",
+        "server.ts",
+        "app.ts",
+        "main.ts",
+    }
+
+    if basename in entry_files:
+        role = "Application entry point"
+        purpose_text = (
+            "Starts the application and initializes the backend."
         )
-    elif clean_purpose.lower() not in generic_purposes:
-        parts.append(
+        if deps:
+            how_it_fits = (
+                "Acts as a starting point for the application "
+                "and connects to the modules it depends on."
+            )
+        else:
+            how_it_fits = (
+                "Acts as a starting point for the application "
+                "within the analyzed repository."
+            )
+
+    elif "test" in basename or "tests" in path.lower():
+        role = "Test module"
+        purpose_text = (
+            "Contains automated tests for the analyzed application."
+        )
+        how_it_fits = (
+            "Validates behavior in the repository and helps verify "
+            "that connected modules work as expected."
+        )
+
+    elif "route" in basename or "api" in basename:
+        role = "Routing module"
+        purpose_text = (
             clean_purpose
+            if clean_purpose
+            else "Defines application routing and request-handling logic."
+        )
+        how_it_fits = (
+            "Provides a routing layer that connects application "
+            "entry points with backend functionality."
         )
 
-    if classes:
-        parts.append(
-            f"defines {', '.join(map(str, classes[:4]))}"
+    elif "config" in basename or "settings" in basename:
+        role = "Configuration module"
+        purpose_text = (
+            clean_purpose
+            if clean_purpose
+            else "Provides configuration used by the application."
+        )
+        how_it_fits = (
+            "Centralizes configuration information used by other "
+            "parts of the application."
         )
 
-    if functions:
-        parts.append(
-            f"exposes {', '.join(map(str, functions[:4]))}"
+    elif classes:
+        role = "Core module"
+        purpose_text = (
+            clean_purpose
+            if clean_purpose
+            else f"Defines {', '.join(map(str, classes[:4]))}."
+        )
+        how_it_fits = (
+            "Provides reusable application logic for the modules "
+            "that depend on it."
         )
 
-    if deps:
-        parts.append(
-            f"has {len(deps)} detected internal "
-            "dependency connection(s)"
+    elif functions:
+        role = "Utility module"
+        purpose_text = (
+            clean_purpose
+            if clean_purpose
+            else f"Provides reusable functions including "
+                 f"{', '.join(map(str, functions[:4]))}."
+        )
+        how_it_fits = (
+            "Provides reusable functionality that can be consumed "
+            "by other modules in the repository."
         )
 
-    if used_by:
-        parts.append(
-            f"is referenced by {len(used_by)} "
-            "other module(s)"
+    elif clean_purpose:
+        role = "Application module"
+        purpose_text = clean_purpose + (
+            "" if clean_purpose.endswith(".") else "."
+        )
+        how_it_fits = (
+            "Contributes functionality to the application and "
+            "connects to the repository through its detected relationships."
         )
 
-    if not parts:
+    else:
+        role = "Source module"
         language = node.get(
             "language",
-            "the detected language"
+            "source"
+        )
+        purpose_text = (
+            f"Contains {language} source code used by the project."
+        )
+        how_it_fits = (
+            "Contributes to the project structure through its "
+            "detected dependencies and relationships."
         )
 
-        parts.append(
-            f"is a {language} source file with "
-            "no additional architectural details detected"
-        )
-
-    return (
-        f"{name} "
-        + "; ".join(parts)
-        + "."
-    )
+    return {
+        "role": role,
+        "purpose": purpose_text,
+        "dependencies": list(deps),
+        "how_it_fits": how_it_fits,
+    }
 
 
 if __name__ == "__main__":

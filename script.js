@@ -625,15 +625,17 @@ function openDocs() {
     <h4>AI Explanation</h4>
 
     <p>
-      <strong>Explain with AI</strong> generates a plain-language
-      explanation of the selected file to help understand its role
-      within the project.
+      <strong>Explain with AI</strong> uses AI to generate a
+      plain-language explanation of the selected file, including
+      its architectural role, purpose, dependencies, and how it
+      fits into the overall project.
     </p>
 
     <p>
-      When available, CodeOrbit can use a local Ollama instance for
-      AI-powered explanations. If an AI service is unavailable, the
-      application can fall back to a code-based explanation.
+      CodeOrbit uses Gemini for AI-powered explanations in the
+      deployed application. When Gemini is unavailable, CodeOrbit
+      can fall back to a local Ollama instance and then use a
+      code-based explanation as a final fallback.
     </p>
 
     <h4>File Explorer</h4>
@@ -1307,7 +1309,6 @@ function selectNode(id) {
       n => n.id === id
     );
 
-
   if (!node) {
     return;
   }
@@ -1315,6 +1316,7 @@ function selectNode(id) {
 
   const edges =
     state.analysis.edges;
+
 
   const deps =
     edges
@@ -1324,6 +1326,7 @@ function selectNode(id) {
       .map(
         e => e.target
       );
+
 
   const usedBy =
     edges
@@ -1383,7 +1386,8 @@ function selectNode(id) {
 
   document.getElementById(
     "explainText"
-  ).textContent = "";
+  ).textContent =
+    "";
 
 
   fillRefList(
@@ -1391,15 +1395,18 @@ function selectNode(id) {
     deps
   );
 
+
   fillRefList(
     "depListFull",
     deps
   );
 
+
   fillRefList(
     "usedByList",
     usedBy
   );
+
 
   fillRefList(
     "usedByListFull",
@@ -1411,8 +1418,6 @@ function selectNode(id) {
     lucide.createIcons();
   }
 }
-
-
 function fillRefList(elId, items) {
   const ul =
     document.getElementById(
@@ -1479,11 +1484,195 @@ function fillRefList(elId, items) {
 
 // ---------- Explain with AI ----------
 
+function renderAiExplanation(
+  box,
+  explanation
+) {
+  box.innerHTML = "";
+
+  if (!explanation) {
+    box.textContent =
+      "No explanation available.";
+
+    return;
+  }
+
+  // Backward compatibility if the backend returns plain text.
+  if (typeof explanation === "string") {
+    box.textContent =
+      explanation;
+
+    return;
+  }
+
+  const wrapper =
+    document.createElement(
+      "div"
+    );
+
+  wrapper.className =
+    "ai-explanation";
+
+  const sections = [
+    {
+      label: "Role:",
+      value: explanation.role,
+    },
+    {
+      label: "Purpose:",
+      value: explanation.purpose,
+    },
+    {
+      label: "Dependencies:",
+      value: explanation.dependencies,
+      type: "dependencies",
+    },
+    {
+      label: "How it fits:",
+      value: explanation.how_it_fits,
+    },
+  ];
+
+  sections.forEach(
+    section => {
+      const sectionEl =
+        document.createElement(
+          "div"
+        );
+
+      sectionEl.className =
+        "ai-explanation-section";
+
+      // Label on its own line
+      const label =
+        document.createElement(
+          "strong"
+        );
+
+      label.className =
+        "ai-explanation-label";
+
+      label.textContent =
+        section.label;
+
+      sectionEl.appendChild(
+        label
+      );
+
+      // Value below the label
+      if (
+        section.type ===
+        "dependencies"
+      ) {
+        const dependencies =
+          Array.isArray(
+            section.value
+          )
+            ? section.value
+            : [];
+
+        if (
+          dependencies.length ===
+          0
+        ) {
+          const none =
+            document.createElement(
+              "div"
+            );
+
+          none.className =
+            "ai-explanation-value muted";
+
+          none.textContent =
+            "None detected";
+
+          sectionEl.appendChild(
+            none
+          );
+        } else {
+          const list =
+            document.createElement(
+              "div"
+            );
+
+          list.className =
+            "ai-explanation-dependencies";
+
+          dependencies.forEach(
+            (
+              dependency,
+              index
+            ) => {
+              const item =
+                document.createElement(
+                  "code"
+                );
+
+              item.className =
+                "ai-explanation-dependency";
+
+              item.textContent =
+                dependency;
+
+              list.appendChild(
+                item
+              );
+
+              if (
+                index <
+                dependencies.length - 1
+              ) {
+                list.appendChild(
+                  document.createTextNode(
+                    ", "
+                  )
+                );
+              }
+            }
+          );
+
+          sectionEl.appendChild(
+            list
+          );
+        }
+      } else {
+        const value =
+          document.createElement(
+            "div"
+          );
+
+        value.className =
+          "ai-explanation-value";
+
+        value.textContent =
+          section.value ||
+          "Not available.";
+
+        sectionEl.appendChild(
+          value
+        );
+      }
+
+      wrapper.appendChild(
+        sectionEl
+      );
+    }
+  );
+
+  box.appendChild(
+    wrapper
+  );
+
+  if (window.lucide) {
+    lucide.createIcons();
+  }
+}
+
+
 async function explainSelected() {
   if (!state.selectedNode) {
     return;
   }
-
 
   const box =
     document.getElementById(
@@ -1494,12 +1683,58 @@ async function explainSelected() {
     return;
   }
 
-
   box.textContent =
     "Thinking…";
 
-
   try {
+    const selected =
+      state.analysis?.nodes?.find(
+        n =>
+          n.id ===
+          state.selectedNode
+      );
+
+    if (!selected) {
+      box.textContent =
+        "Selected file could not be found.";
+
+      return;
+    }
+
+    const edges =
+      state.analysis?.edges ||
+      [];
+
+    const deps =
+      edges
+        .filter(
+          e =>
+            e.source ===
+            state.selectedNode
+        )
+        .map(
+          e =>
+            e.target
+        );
+
+    const usedBy =
+      edges
+        .filter(
+          e =>
+            e.target ===
+            state.selectedNode
+        )
+        .map(
+          e =>
+            e.source
+        );
+
+    const node = {
+      ...selected,
+      deps,
+      usedBy,
+    };
+
     const res =
       await fetch(
         `${API_BASE_URL}/api/explain`,
@@ -1507,61 +1742,30 @@ async function explainSelected() {
           method: "POST",
           headers: {
             "Content-Type":
-              "application/json"
+              "application/json",
           },
           body: JSON.stringify({
-            file: state.selectedNode,
-
-            node: (() => {
-              const selected =
-                state.analysis?.nodes?.find(
-                  n => n.id === state.selectedNode
-                );
-
-              if (!selected) {
-                return null;
-              }
-
-              const edges =
-                state.analysis?.edges || [];
-
-              return {
-                ...selected,
-
-                deps: edges
-                  .filter(
-                    e =>
-                      e.source ===
-                      state.selectedNode
-                  )
-                  .map(
-                    e => e.target
-                  ),
-
-                usedBy: edges
-                  .filter(
-                    e =>
-                      e.target ===
-                      state.selectedNode
-                  )
-                  .map(
-                    e => e.source
-                  )
-              };
-            })()
-          })
+            file:
+              state.selectedNode,
+            node,
+          }),
         }
       );
-
 
     const data =
       await res.json();
 
+    if (!res.ok) {
+      throw new Error(
+        data.error ||
+        "Explanation failed."
+      );
+    }
 
-    box.textContent =
-      data.explanation ||
-      data.error ||
-      "No explanation available.";
+    renderAiExplanation(
+      box,
+      data.explanation
+    );
 
   } catch (err) {
     console.error(
@@ -1781,8 +1985,10 @@ function toggleFullscreen() {
 
 
   const isFullscreen =
-    document.fullscreenElement ||
-    document.webkitFullscreenElement;
+    !!(
+      document.fullscreenElement ||
+      document.webkitFullscreenElement
+    );
 
 
   if (!isFullscreen) {
