@@ -699,7 +699,7 @@ def api_explain():
         deps = client_node.get("deps", [])
         used_by = client_node.get("usedBy", [])
 
-    explanation = _try_gemini_explain(
+    explanation, ai_status = _try_gemini_explain(
         node,
         deps,
         used_by
@@ -720,7 +720,8 @@ def api_explain():
         )
 
     return jsonify({
-        "explanation": explanation
+        "explanation": explanation,
+        "ai_status": ai_status,
     })
 
 
@@ -732,24 +733,22 @@ def _try_gemini_explain(
     """
     Use Gemini to produce a structured architecture explanation.
 
-    The response is normalized into:
-      role
-      purpose
-      dependencies
-      how_it_fits
+    Returns:
+        (explanation, status)
 
-    Dependencies come from CodeOrbit's analyzed dependency graph rather
-    than being invented by the model.
+    Status values let the frontend distinguish a normal Gemini response
+    from a quota/rate-limit condition. The explanation can still come
+    from Ollama or the local heuristic fallback when Gemini is unavailable.
     """
     api_key = os.getenv("GEMINI_API_KEY")
 
     if not api_key:
-        return None
+        return None, "not_configured"
 
     try:
         import requests
     except ImportError:
-        return None
+        return None, "unavailable"
 
     model = os.getenv(
         "GEMINI_MODEL",
@@ -822,7 +821,27 @@ Rules:
         )
 
         if not response.ok:
-            return None
+            error_text = response.text.lower()
+
+            quota_markers = (
+                "quota",
+                "resource exhausted",
+                "rate limit",
+                "rate_limit",
+                "too many requests",
+                "requests per minute",
+                "requests per day",
+                "tokens per minute",
+                "daily limit",
+            )
+
+            if response.status_code == 429 or any(
+                marker in error_text
+                for marker in quota_markers
+            ):
+                return None, "quota_exceeded"
+
+            return None, "unavailable"
 
         payload = response.json()
 
@@ -832,7 +851,7 @@ Rules:
         )
 
         if not candidates:
-            return None
+            return None, "unavailable"
 
         parts = (
             candidates[0]
@@ -849,10 +868,8 @@ Rules:
         raw_text = "\n".join(text_parts).strip()
 
         if not raw_text:
-            return None
+            return None, "unavailable"
 
-        # Be tolerant if the model returns a JSON code fence despite
-        # being instructed not to.
         if raw_text.startswith("```"):
             raw_text = re.sub(
                 r"^```(?:json)?\s*|\s*```$",
@@ -876,17 +893,17 @@ Rules:
         ).strip()
 
         if not role or not purpose or not how_it_fits:
-            return None
+            return None, "unavailable"
 
         return {
             "role": role,
             "purpose": purpose,
             "dependencies": list(deps),
             "how_it_fits": how_it_fits,
-        }
+        }, "gemini"
 
     except Exception:
-        return None
+        return None, "unavailable"
 
 
 def _try_ollama_explain(

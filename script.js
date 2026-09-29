@@ -3,7 +3,11 @@
 // lives here; everything comes from the real repository analysis.
 
 // Render backend used by the GitHub Pages frontend.
-const API_BASE_URL = "https://codeorbit-backend-0t15.onrender.com";
+const API_BASE_URL =
+  window.location.hostname === "localhost" ||
+  window.location.hostname === "127.0.0.1"
+    ? "http://127.0.0.1:5000"
+    : "https://codeorbit-backend-0t15.onrender.com";
 
 const state = {
   analysis: null,
@@ -880,14 +884,9 @@ function render(data) {
 
 
 function renderGraph(data) {
-  const transform =
-    document.getElementById("graphTransform");
-
-  const svg =
-    document.getElementById("connectors");
-
-  const layer =
-    document.getElementById("nodeLayer");
+  const transform = document.getElementById("graphTransform");
+  const svg = document.getElementById("connectors");
+  const layer = document.getElementById("nodeLayer");
 
   if (!transform || !svg || !layer) {
     return;
@@ -896,277 +895,788 @@ function renderGraph(data) {
   layer.innerHTML = "";
   svg.innerHTML = "";
 
-  const COL_W = 230;
   const NODE_W = 190;
-  const ROW_H = 96;
-  const PAD = 30;
+  const NODE_H = 58;
+  const H_GAP = 54;
+  const BASE_V_GAP = 92;
+  const LANE_GAP = 16;
+  const LANE_PADDING = 20;
+  const PAD_X = 60;
+  const PAD_Y = 46;
+  const GROUP_PAD_X = 22;
+  const GROUP_PAD_Y = 18;
 
-  const crossOnly =
-    state.mode === "dependency";
-
+  const crossOnly = state.mode === "dependency";
   const nodesById = {};
 
-  data.nodes.forEach(n => {
-    nodesById[n.id] = n;
+  data.nodes.forEach(node => {
+    nodesById[node.id] = node;
   });
 
-
   const edgesToDraw = crossOnly
-    ? data.edges.filter(
-        e =>
-          nodesById[e.source] &&
-          nodesById[e.target] &&
-          nodesById[e.source].group !==
-            nodesById[e.target].group
-      )
-    : data.edges;
+    ? data.edges.filter(edge => {
+        const source = nodesById[edge.source];
+        const target = nodesById[edge.target];
 
+        return (
+          source &&
+          target &&
+          source.group !== target.group
+        );
+      })
+    : data.edges.filter(edge => {
+        return nodesById[edge.source] && nodesById[edge.target];
+      });
 
-  const dependencyNote =
-    document.getElementById("dependencyNote");
+  const dependencyNote = document.getElementById("dependencyNote");
 
   if (dependencyNote) {
     dependencyNote.hidden = !crossOnly;
   }
 
+  if (!data.nodes.length) {
+    transform.style.width = "0px";
+    transform.style.height = "0px";
+    return;
+  }
 
+  /*
+   * Architecture layout
+   * --------------------
+   * The old renderer placed levels into columns. That works for a tiny graph,
+   * but large repositories become a very wide web of lines. Architecture mode
+   * now uses a top-to-bottom layered layout instead:
+   *
+   *   level 0       Entry points
+   *       ↓
+   *   level 1       Interfaces / orchestration
+   *       ↓
+   *   level 2       Services / modules
+   *       ↓
+   *   level 3       Utilities / generated tools
+   *
+   * Nodes inside a level are ordered around their connected parents. This
+   * greatly reduces crossing lines while remaining completely data-driven.
+   */
   const byLevel = {};
 
-  data.nodes.forEach(n => {
-    byLevel[n.level] =
-      byLevel[n.level] || [];
+  data.nodes.forEach(node => {
+    const level = Number.isFinite(Number(node.level))
+      ? Math.max(0, Number(node.level))
+      : 0;
 
-    byLevel[n.level].push(n);
+    node.__layoutLevel = level;
+
+    if (!byLevel[level]) {
+      byLevel[level] = [];
+    }
+
+    byLevel[level].push(node);
   });
-
 
   const levels = Object.keys(byLevel)
     .map(Number)
     .sort((a, b) => a - b);
 
+  const maxLevel = levels.length ? levels[levels.length - 1] : 0;
 
-  if (!levels.length) {
-    return;
-  }
+  /*
+   * Build incoming/outgoing maps once. Besides making the layout easier to
+   * understand, this avoids repeatedly scanning every edge for every node.
+   */
+  const incoming = {};
+  const outgoing = {};
 
-
-  const maxRows = Math.max(
-    ...levels.map(
-      l => byLevel[l].length
-    )
-  );
-
-
-  const width =
-    levels.length * COL_W + PAD * 2;
-
-  const height =
-    maxRows * ROW_H + PAD * 2;
-
-
-  svg.setAttribute(
-    "viewBox",
-    `0 0 ${width} ${height}`
-  );
-
-  transform.style.width =
-    width + "px";
-
-  transform.style.height =
-    height + "px";
-
-  layer.style.width =
-    width + "px";
-
-  layer.style.height =
-    height + "px";
-
-
-  const connectedInCrossMode =
-    new Set();
-
-  edgesToDraw.forEach(e => {
-    connectedInCrossMode.add(e.source);
-    connectedInCrossMode.add(e.target);
+  data.nodes.forEach(node => {
+    incoming[node.id] = [];
+    outgoing[node.id] = [];
   });
 
+  edgesToDraw.forEach(edge => {
+    if (incoming[edge.target]) {
+      incoming[edge.target].push(edge.source);
+    }
 
-  const pos = {};
+    if (outgoing[edge.source]) {
+      outgoing[edge.source].push(edge.target);
+    }
+  });
 
+  /*
+   * Initial ordering is alphabetical. Subsequent passes move each node toward
+   * the average position of its parents. A second pass uses children as a
+   * stabilizer. This is a lightweight barycentric layout that works well for
+   * both small and large repository graphs without requiring another library.
+   */
+  const orderIndex = {};
 
-  levels.forEach((lvl, colIdx) => {
-    const nodesInLevel =
-      byLevel[lvl];
-
-    const colHeight =
-      nodesInLevel.length * ROW_H;
-
-    const yOffset =
-      PAD +
-      (
-        height -
-        PAD * 2 -
-        colHeight
-      ) / 2;
-
-
-    nodesInLevel.forEach(
-      (n, rowIdx) => {
-        const x =
-          PAD +
-          colIdx * COL_W;
-
-        const y =
-          yOffset +
-          rowIdx * ROW_H;
-
-        pos[n.id] = {
-          x,
-          y
-        };
-
-
-        const classes = [
-          "node"
-        ];
-
-        classes.push(
-          n.isEntry
-            ? "lvl1"
-            : n.degree >= 4
-              ? "hot"
-              : "lvl2"
-        );
-
-
-        if (
-          n.id ===
-          state.selectedNode
-        ) {
-          classes.push("active");
-        }
-
-
-        if (
-          crossOnly &&
-          !connectedInCrossMode.has(
-            n.id
-          )
-        ) {
-          classes.push("dimmed");
-        }
-
-
-        const card = el(
-          "div",
-          {
-            class:
-              classes.join(" ")
-          }
-        );
-
-
-        card.style.left =
-          x + "px";
-
-        card.style.top =
-          y + "px";
-
-        card.dataset.id =
-          n.id;
-
-
-        card.appendChild(
-          el("i", {
-            "data-lucide":
-              iconFor(n.name)
-          })
-        );
-
-
-        const textWrap =
-          el("div");
-
-        textWrap.appendChild(
-          el("strong", {
-            text: n.name
-          })
-        );
-
-        textWrap.appendChild(
-          el("span", {
-            text:
-              n.group
-                ? n.group + "/"
-                : (
-                    n.isEntry
-                      ? "Entry point"
-                      : "root"
-                  )
-          })
-        );
-
-
-        card.appendChild(
-          textWrap
-        );
-
-
-        card.addEventListener(
-          "click",
-          () => selectNode(n.id)
-        );
-
-
-        layer.appendChild(card);
+  levels.forEach(level => {
+    byLevel[level].sort((a, b) => {
+      if (a.isEntry !== b.isEntry) {
+        return a.isEntry ? -1 : 1;
       }
-    );
+
+      const aGroup = a.group || "";
+      const bGroup = b.group || "";
+
+      const groupCompare = aGroup.localeCompare(bGroup);
+
+      if (groupCompare !== 0) {
+        return groupCompare;
+      }
+
+      return a.name.localeCompare(b.name);
+    });
+
+    byLevel[level].forEach((node, index) => {
+      orderIndex[node.id] = index;
+    });
   });
 
-
-  edgesToDraw.forEach(
-    ({ source, target }) => {
-      const a = pos[source];
-      const b = pos[target];
-
-      if (!a || !b) {
+  for (let pass = 0; pass < 3; pass += 1) {
+    levels.forEach(level => {
+      if (level === 0) {
         return;
       }
 
+      byLevel[level].sort((a, b) => {
+        const score = node => {
+          const parents = incoming[node.id] || [];
 
-      const ax =
-        a.x + NODE_W;
+          if (!parents.length) {
+            return orderIndex[node.id] ?? 0;
+          }
 
-      const ay =
-        a.y + 24;
+          let total = 0;
+          let count = 0;
 
-      const bx =
-        b.x;
+          parents.forEach(parentId => {
+            if (orderIndex[parentId] !== undefined) {
+              total += orderIndex[parentId];
+              count += 1;
+            }
+          });
 
-      const by =
-        b.y + 24;
+          return count ? total / count : orderIndex[node.id] ?? 0;
+        };
 
-      const midX =
-        (ax + bx) / 2;
+        const diff = score(a) - score(b);
 
+        if (Math.abs(diff) > 0.001) {
+          return diff;
+        }
 
-      const path =
-        document.createElementNS(
-          "http://www.w3.org/2000/svg",
-          "path"
-        );
+        return a.name.localeCompare(b.name);
+      });
 
+      byLevel[level].forEach((node, index) => {
+        orderIndex[node.id] = index;
+      });
+    });
 
-      path.setAttribute(
-        "d",
-        `M ${ax} ${ay} C ${midX} ${ay}, ${midX} ${by}, ${bx} ${by}`
-      );
+    [...levels].reverse().forEach(level => {
+      if (level === maxLevel) {
+        return;
+      }
 
+      byLevel[level].sort((a, b) => {
+        const score = node => {
+          const children = outgoing[node.id] || [];
 
-      svg.appendChild(path);
-    }
+          if (!children.length) {
+            return orderIndex[node.id] ?? 0;
+          }
+
+          let total = 0;
+          let count = 0;
+
+          children.forEach(childId => {
+            if (orderIndex[childId] !== undefined) {
+              total += orderIndex[childId];
+              count += 1;
+            }
+          });
+
+          return count ? total / count : orderIndex[node.id] ?? 0;
+        };
+
+        const diff = score(a) - score(b);
+
+        if (Math.abs(diff) > 0.001) {
+          return diff;
+        }
+
+        return a.name.localeCompare(b.name);
+      });
+
+      byLevel[level].forEach((node, index) => {
+        orderIndex[node.id] = index;
+      });
+    });
+  }
+
+  const maxNodesInLevel = Math.max(
+    1,
+    ...levels.map(level => byLevel[level].length)
   );
 
+  /*
+   * Give each level boundary enough vertical room for the connector lanes that
+   * cross it. This is important for dense repositories: fixed spacing forces
+   * several edges into the same narrow corridor.
+   */
+  // Build the level lookup before calculating connector spacing.
+  // This must exist before levelGap is calculated because the routing code
+  // uses it to determine which edges cross each level boundary.
+  const nodeLevelById = {};
+  data.nodes.forEach(node => {
+    nodeLevelById[node.id] = node.__layoutLevel;
+  });
+
+  const levelGap = {};
+
+  levels.forEach(level => {
+    if (level === maxLevel) {
+      return;
+    }
+
+    const crossingEdges = edgesToDraw.filter(edge => {
+      const sourceLevel = nodeLevelById[edge.source] ?? 0;
+      const targetLevel = nodeLevelById[edge.target] ?? 0;
+
+      return sourceLevel === level && targetLevel === level + 1;
+    });
+
+    levelGap[level] = Math.max(
+      BASE_V_GAP,
+      LANE_PADDING * 2 +
+        crossingEdges.length * LANE_GAP
+    );
+  });
+
+  const width = Math.max(
+    760,
+    maxNodesInLevel * (NODE_W + H_GAP) - H_GAP + PAD_X * 2
+  );
+
+  const height = Math.max(
+    520,
+    PAD_Y * 2 +
+      levels.reduce(
+        (total, level, index) =>
+          total +
+          NODE_H +
+          (index < levels.length - 1
+            ? levelGap[level] || BASE_V_GAP
+            : 0),
+        0
+      )
+  );
+
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.setAttribute("width", width);
+  svg.setAttribute("height", height);
+
+  transform.style.width = `${width}px`;
+  transform.style.height = `${height}px`;
+
+  layer.style.width = `${width}px`;
+  layer.style.height = `${height}px`;
+
+  /*
+   * Arrow marker. It lives inside the SVG so connectors remain crisp when the
+   * graph is zoomed with the existing graph-transform element.
+   */
+  const defs = document.createElementNS(
+    "http://www.w3.org/2000/svg",
+    "defs"
+  );
+
+  const marker = document.createElementNS(
+    "http://www.w3.org/2000/svg",
+    "marker"
+  );
+
+  marker.setAttribute("id", "codeorbit-arrow");
+  marker.setAttribute("viewBox", "0 0 10 10");
+  marker.setAttribute("refX", "9");
+  marker.setAttribute("refY", "5");
+  marker.setAttribute("markerWidth", "6");
+  marker.setAttribute("markerHeight", "6");
+  marker.setAttribute("orient", "auto-start-reverse");
+
+  const arrowPath = document.createElementNS(
+    "http://www.w3.org/2000/svg",
+    "path"
+  );
+
+  arrowPath.setAttribute("d", "M 0 0 L 10 5 L 0 10 z");
+  arrowPath.setAttribute("fill", "currentColor");
+
+  marker.appendChild(arrowPath);
+  defs.appendChild(marker);
+  svg.appendChild(defs);
+
+  const pos = {};
+
+  /*
+   * Center every level independently. The result is a balanced tree instead
+   * of a long left-aligned list. For very large repositories the level simply
+   * becomes wider and the existing graph-canvas scrollbars handle it.
+   */
+  let currentY = PAD_Y;
+
+  levels.forEach((level, levelIndex) => {
+    const nodes = byLevel[level];
+    const rowWidth =
+      nodes.length * NODE_W + Math.max(0, nodes.length - 1) * H_GAP;
+    const startX = Math.max(PAD_X, (width - rowWidth) / 2);
+    const y = currentY;
+
+    nodes.forEach((node, index) => {
+      const x = startX + index * (NODE_W + H_GAP);
+
+      pos[node.id] = {
+        x,
+        y,
+        width: NODE_W,
+        height: NODE_H,
+        centerX: x + NODE_W / 2,
+        centerY: y + NODE_H / 2,
+        level,
+        index,
+      };
+    });
+
+    if (levelIndex < levels.length - 1) {
+      currentY += NODE_H + (levelGap[level] || BASE_V_GAP);
+    }
+  });
+
+  /*
+   * Large-project grouping.
+   * -------------------------
+   * A group is drawn separately for each graph level. A single container that
+   * spans several levels becomes enormous and can overlap unrelated nodes, so
+   * keeping each level cluster independent makes the grouping boxes tight and
+   * readable.
+   */
+  const groupBuckets = {};
+
+  data.nodes.forEach(node => {
+    if (!node.group || !pos[node.id]) {
+      return;
+    }
+
+    const key = `${node.group}__level_${node.__layoutLevel}`;
+
+    if (!groupBuckets[key]) {
+      groupBuckets[key] = {
+        name: node.group,
+        nodes: [],
+      };
+    }
+
+    groupBuckets[key].nodes.push(node);
+  });
+
+  Object.values(groupBuckets).forEach(({ name: groupName, nodes }) => {
+    if (nodes.length < 2) {
+      return;
+    }
+
+    const points = nodes
+      .map(node => pos[node.id])
+      .filter(Boolean);
+
+    if (!points.length) {
+      return;
+    }
+
+    const minX = Math.min(...points.map(p => p.x));
+    const maxX = Math.max(...points.map(p => p.x + p.width));
+    const minY = Math.min(...points.map(p => p.y));
+    const maxY = Math.max(...points.map(p => p.y + p.height));
+
+    const groupBox = el("div", {
+      class: "architecture-group",
+    });
+
+    const boxPadX = 14;
+    const boxPadY = 16;
+    const labelHeight = 18;
+
+    groupBox.style.position = "absolute";
+    groupBox.style.left = `${minX - boxPadX}px`;
+    groupBox.style.top = `${minY - boxPadY - labelHeight / 2}px`;
+    groupBox.style.width = `${maxX - minX + boxPadX * 2}px`;
+    groupBox.style.height = `${maxY - minY + boxPadY * 2 + labelHeight / 2}px`;
+    groupBox.style.boxSizing = "border-box";
+    groupBox.style.border = "1px solid rgba(255, 255, 255, 0.48)";
+    groupBox.style.borderRadius = "12px";
+    groupBox.style.background = "rgba(255, 255, 255, 0.035)";
+    groupBox.style.boxShadow = "inset 0 0 0 1px rgba(255, 255, 255, 0.035)";
+    groupBox.style.pointerEvents = "none";
+    groupBox.style.zIndex = "0";
+
+    const label = el("span", {
+      text: `${groupName}/`,
+    });
+
+    label.style.position = "absolute";
+    label.style.left = "12px";
+    label.style.top = "-10px";
+    label.style.padding = "2px 8px";
+    label.style.borderRadius = "6px";
+    label.style.background = "var(--panel)";
+    label.style.border = "1px solid rgba(255, 255, 255, 0.42)";
+    label.style.color = "rgba(255, 255, 255, 0.92)";
+    label.style.fontSize = "10px";
+    label.style.fontWeight = "600";
+    label.style.letterSpacing = "0.02em";
+    label.style.lineHeight = "14px";
+    label.style.whiteSpace = "nowrap";
+
+    groupBox.appendChild(label);
+    layer.appendChild(groupBox);
+  });
+
+  const connectedInCrossMode = new Set();
+
+  edgesToDraw.forEach(edge => {
+    connectedInCrossMode.add(edge.source);
+    connectedInCrossMode.add(edge.target);
+  });
+
+  /*
+   * Connector routing
+   * -----------------
+   * Direct dependencies use dedicated horizontal lanes in the gap between
+   * rows. Long/backward dependencies use the outside rails and enter the
+   * target from its side. This is important because a target-side horizontal
+   * segment must never run through the row of cards.
+   */
+  const laneGroups = {};
+
+  edgesToDraw.forEach(edge => {
+    const a = pos[edge.source];
+    const b = pos[edge.target];
+
+    if (!a || !b || b.level !== a.level + 1) {
+      return;
+    }
+
+    if (!laneGroups[a.level]) {
+      laneGroups[a.level] = [];
+    }
+
+    laneGroups[a.level].push(edge);
+  });
+
+  Object.values(laneGroups).forEach(edges => {
+    edges.sort((a, b) => {
+      const aSource = pos[a.source];
+      const bSource = pos[b.source];
+      const aTarget = pos[a.target];
+      const bTarget = pos[b.target];
+
+      return (
+        aSource.centerX - bSource.centerX ||
+        aTarget.centerX - bTarget.centerX ||
+        a.source.localeCompare(b.source) ||
+        a.target.localeCompare(b.target)
+      );
+    });
+  });
+
+  const sourcePortX = new Map();
+  const targetPortX = new Map();
+  const directOutgoing = {};
+  const directIncoming = {};
+
+  edgesToDraw.forEach(edge => {
+    const a = pos[edge.source];
+    const b = pos[edge.target];
+
+    if (!a || !b || b.level !== a.level + 1) {
+      return;
+    }
+
+    (directOutgoing[edge.source] ||= []).push(edge);
+    (directIncoming[edge.target] ||= []).push(edge);
+  });
+
+  const assignPorts = (groups, outputMap) => {
+    Object.values(groups).forEach(group => {
+      group.sort((a, b) =>
+        a.target.localeCompare(b.target) ||
+        a.source.localeCompare(b.source)
+      );
+
+      const spacing = 12;
+      const maxOffset = Math.min(
+        60,
+        Math.max(10, ((group.length - 1) * spacing) / 2)
+      );
+
+      group.forEach((edge, index) => {
+        const offset =
+          (index - (group.length - 1) / 2) * spacing;
+
+        outputMap.set(
+          edge,
+          Math.max(-maxOffset, Math.min(maxOffset, offset))
+        );
+      });
+    });
+  };
+
+  assignPorts(directOutgoing, sourcePortX);
+  assignPorts(directIncoming, targetPortX);
+
+  const laneY = new Map();
+
+  Object.entries(laneGroups).forEach(([levelKey, edges]) => {
+    const level = Number(levelKey);
+    const firstNode = byLevel[level]?.[0];
+
+    if (!firstNode) {
+      return;
+    }
+
+    const gapStart = pos[firstNode.id].y + NODE_H;
+    const gapHeight = levelGap[level] || BASE_V_GAP;
+    const usableHeight = Math.max(
+      LANE_GAP,
+      gapHeight - LANE_PADDING * 2
+    );
+
+    const slots = Math.max(
+      1,
+      Math.min(
+        edges.length,
+        Math.floor(usableHeight / LANE_GAP)
+      )
+    );
+
+    edges.forEach((edge, index) => {
+      const slot = index % slots;
+      const laneStep = slots === 1
+        ? usableHeight / 2
+        : Math.min(
+            LANE_GAP,
+            usableHeight / Math.max(1, slots - 1)
+          );
+
+      laneY.set(
+        edge,
+        gapStart +
+          LANE_PADDING +
+          Math.min(
+            usableHeight - LANE_GAP,
+            slot * laneStep
+          )
+      );
+    });
+  });
+
+  const skippedEdges = edgesToDraw.filter(({ source, target }) => {
+    const a = pos[source];
+    const b = pos[target];
+    return a && b && b.level > a.level + 1;
+  });
+
+  const sideLaneByEdge = new Map();
+  skippedEdges.forEach((edge, index) => {
+    sideLaneByEdge.set(edge, index);
+  });
+
+  /*
+   * Use a small outer margin for long routes. The rail is deliberately kept
+   * inside the SVG bounds, so it can never create the stray blue lines seen at
+   * the top/right edge of the previous renderer.
+   */
+  const leftRailX = Math.max(24, PAD_X - 30);
+  const rightRailX = Math.min(width - 24, width - PAD_X + 30);
+
+  edgesToDraw.forEach(edge => {
+    const { source, target } = edge;
+    const a = pos[source];
+    const b = pos[target];
+
+    if (!a || !b) {
+      return;
+    }
+
+    const isDirect = b.level === a.level + 1;
+    const isForwardSkip = b.level > a.level + 1;
+
+    const startX =
+      a.centerX + (sourcePortX.get(edge) || 0);
+    const startY = a.y + a.height;
+
+    const endX =
+      b.centerX + (targetPortX.get(edge) || 0);
+    const endY = b.y;
+
+    let pathData;
+
+    if (isDirect) {
+      const lane = laneY.get(edge) ??
+        (startY + endY) / 2;
+
+      pathData =
+        `M ${startX} ${startY} ` +
+        `L ${startX} ${lane} ` +
+        `L ${endX} ${lane} ` +
+        `L ${endX} ${endY}`;
+    } else {
+      /*
+       * Long and backward dependencies are kept completely outside the card
+       * columns. They approach the target through its left/right edge rather
+       * than drawing a horizontal line across the target row.
+       */
+      const index = sideLaneByEdge.get(edge) ?? 0;
+      const useLeft = index % 2 === 0;
+      const railX = useLeft
+        ? leftRailX - Math.floor(index / 2) * 10
+        : rightRailX + Math.floor(index / 2) * 10;
+
+      const targetSideX = useLeft
+        ? b.x
+        : b.x + b.width;
+      const targetSideY = b.y + b.height / 2;
+
+      if (isForwardSkip) {
+        const safeRailX = Math.max(
+          12,
+          Math.min(width - 12, railX)
+        );
+
+        pathData =
+          `M ${startX} ${startY} ` +
+          `L ${safeRailX} ${startY} ` +
+          `L ${safeRailX} ${targetSideY} ` +
+          `L ${targetSideX} ${targetSideY}`;
+      } else {
+        /* Backward/cyclic edge: exit below the source, use the outside rail,
+           then enter the target from its side. */
+        const safeRailX = Math.max(
+          12,
+          Math.min(width - 12, railX)
+        );
+
+        const sourceExitY = startY + 22;
+
+        pathData =
+          `M ${startX} ${startY} ` +
+          `L ${startX} ${sourceExitY} ` +
+          `L ${safeRailX} ${sourceExitY} ` +
+          `L ${safeRailX} ${targetSideY} ` +
+          `L ${targetSideX} ${targetSideY}`;
+      }
+    }
+
+    const path = document.createElementNS(
+      "http://www.w3.org/2000/svg",
+      "path"
+    );
+
+    path.setAttribute("d", pathData);
+    path.setAttribute("fill", "none");
+    path.setAttribute("stroke", "#3B82F6");
+    path.setAttribute("stroke-width", "2");
+    path.setAttribute("stroke-linecap", "round");
+    path.setAttribute("stroke-linejoin", "round");
+    path.setAttribute("marker-end", "url(#codeorbit-arrow)");
+    path.style.color = "#3B82F6";
+    path.style.opacity = "0.88";
+
+    svg.appendChild(path);
+  });
+
+  /* Create the cards after the connectors and grouping containers. */
+  levels.forEach(level => {
+    byLevel[level].forEach(node => {
+      const classes = ["node"];
+
+      classes.push(
+        node.isEntry
+          ? "lvl1"
+          : node.degree >= 4
+            ? "hot"
+            : "lvl2"
+      );
+
+      if (node.id === state.selectedNode) {
+        classes.push("active");
+      }
+
+      if (
+        crossOnly &&
+        !connectedInCrossMode.has(node.id)
+      ) {
+        classes.push("dimmed");
+      }
+
+      const card = el("div", {
+        class: classes.join(" "),
+      });
+
+      const p = pos[node.id];
+
+      card.style.left = `${p.x}px`;
+      card.style.top = `${p.y}px`;
+      card.style.width = `${NODE_W}px`;
+      card.style.minHeight = `${NODE_H}px`;
+      card.style.zIndex = "2";
+      card.dataset.id = node.id;
+      card.title = node.id;
+
+      const icon = el("i", {
+        "data-lucide": iconFor(node.name),
+      });
+
+      card.appendChild(icon);
+
+      const textWrap = el("div");
+      textWrap.style.minWidth = "0";
+      textWrap.style.flex = "1";
+
+      textWrap.appendChild(
+        el("strong", {
+          text: node.name,
+          title: node.name,
+        })
+      );
+
+      const roleText =
+        node.architectureType ||
+        node.role ||
+        (node.isEntry ? "Entry Point" : node.group || "Module");
+
+      textWrap.appendChild(
+        el("span", {
+          text: roleText,
+        })
+      );
+
+      card.appendChild(textWrap);
+
+      if (outgoing[node.id] && outgoing[node.id].length) {
+        const chevron = el("i", {
+          class: "node-chevron",
+          "data-lucide": "chevron-right",
+        });
+
+        card.appendChild(chevron);
+      }
+
+      card.addEventListener("click", () => selectNode(node.id));
+
+      layer.appendChild(card);
+    });
+  });
 
   if (window.lucide) {
     lucide.createIcons();
@@ -1418,6 +1928,8 @@ function selectNode(id) {
     lucide.createIcons();
   }
 }
+
+
 function fillRefList(elId, items) {
   const ul =
     document.getElementById(
