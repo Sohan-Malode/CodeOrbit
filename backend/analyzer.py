@@ -82,9 +82,29 @@ def _py_imports(source):
 
 
 def _js_imports(source):
-    found = re.findall(r"""require\(\s*['"]([^'"]+)['"]\s*\)""", source)
-    found += re.findall(r"""from\s+['"]([^'"]+)['"]""", source)
-    return found
+    """Return JavaScript/TypeScript import and require targets."""
+    found = []
+
+    # CommonJS:
+    # require("express")
+    # require("./routes")
+    found += re.findall(
+        r"""require\(\s*['"]([^'"]+)['"]\s*\)""",
+        source,
+    )
+
+    # ES modules:
+    # import express from "express"
+    # import { router } from "./routes"
+    # import * as utils from "./utils"
+    # import "./config.js"
+    found += re.findall(
+        r"""import\s+(?:[\s\S]*?\s+from\s+)?['"]([^'"]+)['"]""",
+        source,
+    )
+
+    # Remove duplicates while preserving discovery order.
+    return list(dict.fromkeys(found))
 
 
 def _first_docstring_or_comment(source, ext):
