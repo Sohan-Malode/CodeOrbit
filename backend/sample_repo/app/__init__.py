@@ -1,5 +1,8 @@
 from flask import Flask
 
-app = Flask(__name__)
+from .routes import register_routes
 
-from app import routes
+
+app = Flask(__name__)
+app.config["JSON_SORT_KEYS"] = False
+register_routes(app)

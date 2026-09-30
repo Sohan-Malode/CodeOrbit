@@ -65,6 +65,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const uploadZipBtn = document.getElementById("uploadZipBtn");
   const zipInput = document.getElementById("zipInput");
   const sampleRepoBtn = document.getElementById("sampleRepoBtn");
+  const legacySampleBtn = document.getElementById("legacySampleBtn");
   const githubRepoBtn = document.getElementById("githubRepoBtn");
   const newAnalysisBtn = document.getElementById("newAnalysisBtn");
   const themeToggleBtn = document.getElementById("themeToggleBtn");
@@ -81,6 +82,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
   if (sampleRepoBtn) {
     sampleRepoBtn.addEventListener("click", () => analyze({ sample: true }));
+  }
+
+  if (legacySampleBtn) {
+    legacySampleBtn.addEventListener("click", () => analyze({ sample: "legacy" }));
   }
 
   if (githubRepoBtn) {
@@ -437,7 +442,9 @@ function openFileExplorer() {
     return;
   }
 
-  const root = {};
+  // Object.create(null) keeps file names such as "constructor" or
+  // "__proto__" from colliding with Object.prototype members.
+  const root = { children: Object.create(null) };
 
   state.analysis.nodes.forEach(n => {
     const parts = n.id.split("/");
@@ -446,13 +453,16 @@ function openFileExplorer() {
     parts.forEach((part, i) => {
       const isFile = i === parts.length - 1;
 
-      cur.children = cur.children || {};
+      if (!cur.children) {
+        cur.children = Object.create(null);
+      }
 
       if (!cur.children[part]) {
         cur.children[part] = {
           name: part,
           isFile,
-          id: isFile ? n.id : null
+          id: isFile ? n.id : null,
+          node: isFile ? n : null
         };
       }
 
@@ -495,6 +505,21 @@ function openFileExplorer() {
               text: child.name
             })
           );
+
+          [
+            ["isCircular", "CYCLE", "issue-circular"],
+            ["isUnused", "UNUSED", "issue-unused"],
+            ["isDead", "DEAD", "issue-dead"]
+          ].forEach(([flag, label, cls]) => {
+            if (child.node && child.node[flag]) {
+              row.appendChild(
+                el("span", {
+                  class: "tree-badge " + cls,
+                  text: label
+                })
+              );
+            }
+          });
 
           row.addEventListener("click", () => {
             closeModal();
@@ -739,7 +764,7 @@ async function analyze({ file, sample, githubUrl }) {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          sample: true
+          sample: sample === "legacy" ? "legacy" : true
         })
       });
     }
@@ -895,14 +920,16 @@ function renderGraph(data) {
   layer.innerHTML = "";
   svg.innerHTML = "";
 
-  const NODE_W = 190;
+  const NODE_W = 180;
   const NODE_H = 58;
-  const H_GAP = 54;
-  const BASE_V_GAP = 92;
-  const LANE_GAP = 16;
-  const LANE_PADDING = 20;
-  const PAD_X = 60;
-  const PAD_Y = 46;
+  const H_GAP = 28;
+  const BASE_V_GAP = 74;
+  const LANE_GAP = 14;
+  const LANE_PADDING = 16;
+  const PAD_X = 42;
+  const PAD_Y = 36;
+  const MAX_NODES_PER_ROW = 4;
+  const LEVEL_ROW_GAP = 34;
   const GROUP_PAD_X = 22;
   const GROUP_PAD_Y = 18;
 
@@ -979,6 +1006,15 @@ function renderGraph(data) {
     .sort((a, b) => a - b);
 
   const maxLevel = levels.length ? levels[levels.length - 1] : 0;
+
+  // Fast lookup for the layout level of every node.
+  // Connector routing uses this map after the wrapped layout is calculated.
+  // Keep it separate from the mutable node objects so the routing code remains
+  // safe even when a node does not have an explicit level.
+  const nodeLevelById = {};
+  data.nodes.forEach(node => {
+    nodeLevelById[node.id] = node.__layoutLevel ?? 0;
+  });
 
   /*
    * Build incoming/outgoing maps once. Besides making the layout easier to
@@ -1115,24 +1151,102 @@ function renderGraph(data) {
     });
   }
 
+  /*
+   * The barycentric passes above minimise edge crossings but scramble
+   * folders, so cards of different groups interleave and the group boxes
+   * overlap. Re-cluster every level: groups are ordered by the mean position
+   * of their members and each group's members stay together (keeping their
+   * barycentric order inside the group).
+   */
+  levels.forEach(level => {
+    const stats = {};
+
+    byLevel[level].forEach((node, index) => {
+      const key = node.group || "";
+
+      if (!stats[key]) {
+        stats[key] = { total: 0, count: 0 };
+      }
+
+      stats[key].total += index;
+      stats[key].count += 1;
+    });
+
+    const originalIndex = new Map(
+      byLevel[level].map((node, index) => [node.id, index])
+    );
+
+    byLevel[level].sort((a, b) => {
+      const aKey = a.group || "";
+      const bKey = b.group || "";
+
+      if (aKey !== bKey) {
+        const aMean = stats[aKey].total / stats[aKey].count;
+        const bMean = stats[bKey].total / stats[bKey].count;
+
+        if (aMean !== bMean) {
+          return aMean - bMean;
+        }
+
+        return aKey.localeCompare(bKey);
+      }
+
+      return originalIndex.get(a.id) - originalIndex.get(b.id);
+    });
+
+    byLevel[level].forEach((node, index) => {
+      orderIndex[node.id] = index;
+    });
+  });
+
+  /*
+   * Keep architecture diagrams compact. A large repository can have hundreds
+   * of nodes at the same BFS level. Putting every node into one horizontal row
+   * creates the very wide diagram that is hard to present or inspect.
+   *
+   * Each level is therefore wrapped into a small grid with a fixed maximum
+   * number of cards per row. The graph canvas still scrolls when necessary,
+   * but the architecture stays presentation-friendly instead of becoming a
+   * single extremely wide strip.
+   */
   const maxNodesInLevel = Math.max(
     1,
     ...levels.map(level => byLevel[level].length)
   );
 
-  /*
-   * Give each level boundary enough vertical room for the connector lanes that
-   * cross it. This is important for dense repositories: fixed spacing forces
-   * several edges into the same narrow corridor.
-   */
-  // Build the level lookup before calculating connector spacing.
-  // This must exist before levelGap is calculated because the routing code
-  // uses it to determine which edges cross each level boundary.
-  const nodeLevelById = {};
-  data.nodes.forEach(node => {
-    nodeLevelById[node.id] = node.__layoutLevel;
+  const columns = Math.min(
+    MAX_NODES_PER_ROW,
+    Math.max(1, maxNodesInLevel)
+  );
+
+  const levelLayout = {};
+  const levelHeight = {};
+
+  levels.forEach(level => {
+    const count = byLevel[level].length;
+    const rows = Math.max(1, Math.ceil(count / columns));
+    const height =
+      rows * NODE_H +
+      Math.max(0, rows - 1) * LEVEL_ROW_GAP;
+
+    levelLayout[level] = {
+      rows,
+      height,
+    };
+
+    levelHeight[level] = height;
   });
 
+  const width = Math.max(
+    760,
+    columns * (NODE_W + H_GAP) - H_GAP + PAD_X * 2
+  );
+
+  /*
+   * Give each level boundary enough vertical room for connector lanes. The
+   * calculation uses all direct edges between adjacent levels, not the number
+   * of nodes, so dense boundaries get extra breathing room.
+   */
   const levelGap = {};
 
   levels.forEach(level => {
@@ -1149,15 +1263,9 @@ function renderGraph(data) {
 
     levelGap[level] = Math.max(
       BASE_V_GAP,
-      LANE_PADDING * 2 +
-        crossingEdges.length * LANE_GAP
+      LANE_PADDING * 2 + crossingEdges.length * LANE_GAP
     );
   });
-
-  const width = Math.max(
-    760,
-    maxNodesInLevel * (NODE_W + H_GAP) - H_GAP + PAD_X * 2
-  );
 
   const height = Math.max(
     520,
@@ -1165,7 +1273,7 @@ function renderGraph(data) {
       levels.reduce(
         (total, level, index) =>
           total +
-          NODE_H +
+          levelHeight[level] +
           (index < levels.length - 1
             ? levelGap[level] || BASE_V_GAP
             : 0),
@@ -1217,24 +1325,26 @@ function renderGraph(data) {
   defs.appendChild(marker);
   svg.appendChild(defs);
 
-  const pos = {};
-
   /*
-   * Center every level independently. The result is a balanced tree instead
-   * of a long left-aligned list. For very large repositories the level simply
-   * becomes wider and the existing graph-canvas scrollbars handle it.
+   * Position each level as a centered grid.
    */
+  const pos = {};
+  const levelBounds = {};
   let currentY = PAD_Y;
 
-  levels.forEach((level, levelIndex) => {
+  levels.forEach(level => {
     const nodes = byLevel[level];
+    const rows = levelLayout[level].rows;
     const rowWidth =
-      nodes.length * NODE_W + Math.max(0, nodes.length - 1) * H_GAP;
+      columns * NODE_W + Math.max(0, columns - 1) * H_GAP;
     const startX = Math.max(PAD_X, (width - rowWidth) / 2);
-    const y = currentY;
 
-    nodes.forEach((node, index) => {
-      const x = startX + index * (NODE_W + H_GAP);
+    for (let index = 0; index < nodes.length; index += 1) {
+      const row = Math.floor(index / columns);
+      const column = index % columns;
+      const x = startX + column * (NODE_W + H_GAP);
+      const y = currentY + row * (NODE_H + LEVEL_ROW_GAP);
+      const node = nodes[index];
 
       pos[node.id] = {
         x,
@@ -1246,11 +1356,16 @@ function renderGraph(data) {
         level,
         index,
       };
-    });
-
-    if (levelIndex < levels.length - 1) {
-      currentY += NODE_H + (levelGap[level] || BASE_V_GAP);
     }
+
+    levelBounds[level] = {
+      top: currentY,
+      bottom: currentY + levelHeight[level],
+    };
+
+    currentY +=
+      levelHeight[level] +
+      (level === maxLevel ? 0 : levelGap[level] || BASE_V_GAP);
   });
 
   /*
@@ -1268,7 +1383,9 @@ function renderGraph(data) {
       return;
     }
 
-    const key = `${node.group}__level_${node.__layoutLevel}`;
+    // Bucket by row as well: a level wraps into several grid rows, and one
+    // bounding box across rows swallows neighbouring groups' cards.
+    const key = `${node.group}__level_${node.__layoutLevel}__row_${Math.round(pos[node.id].y)}`;
 
     if (!groupBuckets[key]) {
       groupBuckets[key] = {
@@ -1438,13 +1555,11 @@ function renderGraph(data) {
 
   Object.entries(laneGroups).forEach(([levelKey, edges]) => {
     const level = Number(levelKey);
-    const firstNode = byLevel[level]?.[0];
-
-    if (!firstNode) {
+    if (!levelBounds[level]) {
       return;
     }
 
-    const gapStart = pos[firstNode.id].y + NODE_H;
+    const gapStart = levelBounds[level].bottom;
     const gapHeight = levelGap[level] || BASE_V_GAP;
     const usableHeight = Math.max(
       LANE_GAP,
@@ -1608,6 +1723,18 @@ function renderGraph(data) {
             : "lvl2"
       );
 
+      if (node.isCircular) {
+        classes.push("issue-circular");
+      }
+
+      if (node.isUnused) {
+        classes.push("issue-unused");
+      }
+
+      if (node.isDead) {
+        classes.push("issue-dead");
+      }
+
       if (node.id === state.selectedNode) {
         classes.push("active");
       }
@@ -1632,6 +1759,20 @@ function renderGraph(data) {
       card.style.zIndex = "2";
       card.dataset.id = node.id;
       card.title = node.id;
+
+      const issueLabels = node.issueLabels || [];
+
+      if (issueLabels.length) {
+        const issueBadge = el("span", {
+          class: "node-issue-badge",
+          text: issueLabels
+            .map(label => label.toUpperCase())
+            .join(" / "),
+          title: "Architecture issue detected: " + issueLabels.join(", "),
+        });
+
+        card.appendChild(issueBadge);
+      }
 
       const icon = el("i", {
         "data-lucide": iconFor(node.name),

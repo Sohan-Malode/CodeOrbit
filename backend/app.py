@@ -28,6 +28,7 @@ from analyzer import analyze_repo
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 FRONTEND_DIR = os.path.abspath(os.path.join(BASE_DIR, ".."))
 SAMPLE_REPO = os.path.join(BASE_DIR, "sample_repo")
+LEGACY_SAMPLE_REPO = os.path.join(BASE_DIR, "sample_repo_legacy")
 
 
 def _parse_github_url(github_url):
@@ -65,6 +66,37 @@ def _parse_github_url(github_url):
     return owner, repo
 
 
+def _parse_github_branch(github_url):
+    """Return the branch from .../tree/<branch> URLs, else None."""
+    try:
+        parts = [
+            p for p in urlparse(github_url.strip()).path.strip("/").split("/")
+            if p
+        ]
+    except Exception:
+        return None
+
+    if len(parts) == 4 and parts[2] == "tree":
+        return parts[3]
+
+    return None
+
+
+def _github_headers(accept=None):
+    headers = {"User-Agent": "CodeOrbit"}
+
+    if accept:
+        headers["Accept"] = accept
+
+    # Optional: raises the API limit from 60 to 5000 requests/hour.
+    token = os.environ.get("GITHUB_TOKEN")
+
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    return headers
+
+
 def _github_default_branch(owner, repo):
     api_url = (
         f"https://api.github.com/repos/"
@@ -73,10 +105,7 @@ def _github_default_branch(owner, repo):
 
     req = Request(
         api_url,
-        headers={
-            "Accept": "application/vnd.github+json",
-            "User-Agent": "CodeOrbit"
-        }
+        headers=_github_headers("application/vnd.github+json")
     )
 
     with urlopen(req, timeout=15) as response:
@@ -105,36 +134,25 @@ def _download_github_repo(github_url):
 
     owner, repo = parsed
 
-    try:
-        branch = _github_default_branch(owner, repo)
+    # The default-branch API lookup is limited to 60 requests/hour per IP for
+    # anonymous callers and answers HTTP 403 once exhausted. The archive for
+    # "HEAD" is always the default branch and is not subject to that limit, so
+    # it is used directly. The API is only a fallback.
+    branch = _parse_github_branch(github_url) or "HEAD"
 
-    except HTTPError as exc:
-        if exc.code == 404:
-            raise ValueError(
-                "That GitHub repository was not found or is not public."
+    def archive_url(ref):
+        if ref == "HEAD":
+            return (
+                f"https://codeload.github.com/{quote(owner)}/{quote(repo)}"
+                "/zip/HEAD"
             )
 
-        raise ValueError(
-            f"GitHub returned HTTP {exc.code} "
-            "while looking up the repository."
+        return (
+            f"https://codeload.github.com/{quote(owner)}/{quote(repo)}"
+            f"/zip/refs/heads/{quote(ref, safe='')}"
         )
 
-    except URLError:
-        raise ValueError(
-            "Could not reach GitHub. "
-            "Check your internet connection and try again."
-        )
-
-    except TimeoutError:
-        raise ValueError(
-            "GitHub took too long to respond. "
-            "Please try again."
-        )
-
-    download_url = (
-        f"https://github.com/{quote(owner)}/{quote(repo)}"
-        f"/archive/refs/heads/{quote(branch, safe='')}.zip"
-    )
+    download_url = archive_url(branch)
 
     upload_dir = tempfile.mkdtemp(
         prefix="codeorbit_github_"
@@ -146,21 +164,28 @@ def _download_github_repo(github_url):
     )
 
     try:
-        req = Request(
-            download_url,
-            headers={
-                "User-Agent": "CodeOrbit"
-            }
-        )
+        def fetch(url):
+            req = Request(url, headers=_github_headers())
 
-        with (
-            urlopen(req, timeout=60) as response,
-            open(zip_path, "wb") as output
-        ):
-            shutil.copyfileobj(
-                response,
-                output
-            )
+            with (
+                urlopen(req, timeout=60) as response,
+                open(zip_path, "wb") as output
+            ):
+                shutil.copyfileobj(
+                    response,
+                    output
+                )
+
+        try:
+            fetch(download_url)
+
+        except HTTPError as first_error:
+            if first_error.code != 404 or branch != "HEAD":
+                raise
+
+            # Rare: HEAD not resolvable. Ask the API for the branch name.
+            default_branch = _github_default_branch(owner, repo)
+            fetch(archive_url(default_branch))
 
         with zipfile.ZipFile(zip_path) as zf:
             base_path = os.path.realpath(upload_dir)
@@ -193,8 +218,16 @@ def _download_github_repo(github_url):
 
         if exc.code == 404:
             raise ValueError(
-                "The repository archive could not be downloaded. "
-                "The repository may be empty or unavailable."
+                "That GitHub repository (or branch) was not found, or it "
+                "is private. Only public repositories can be analyzed."
+            )
+
+        if exc.code in (403, 429):
+            raise ValueError(
+                "GitHub is temporarily rate-limiting this network "
+                f"(HTTP {exc.code}). Wait a few minutes and try again, "
+                "set a GITHUB_TOKEN environment variable, or download the "
+                "repository as a ZIP and use Upload ZIP."
             )
 
         raise ValueError(
@@ -439,6 +472,7 @@ def api_analyze():
     upload_dir = None
     project_name = "repository"
     github_url = None
+    sample_root = SAMPLE_REPO
 
     if (
         request.content_type
@@ -564,6 +598,12 @@ def api_analyze():
             ):
                 project_name = detected_name
 
+        elif data.get("sample") == "legacy":
+            # Messy real-world style repo: cycles, dead and unused modules.
+            sample_root = LEGACY_SAMPLE_REPO
+            root = sample_root
+            project_name = "Legacy Shop (messy sample)"
+
         else:
             root = SAMPLE_REPO
 
@@ -597,7 +637,7 @@ def api_analyze():
         if upload_dir:
             LAST_ANALYSIS["root"] = upload_dir
         else:
-            LAST_ANALYSIS["root"] = SAMPLE_REPO
+            LAST_ANALYSIS["root"] = sample_root
 
     result["projectName"] = project_name
 

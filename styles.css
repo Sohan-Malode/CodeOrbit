@@ -668,6 +668,14 @@ svg{ width: 16px; height: 16px; flex-shrink: 0; }
 .tree-node.folder{ color: var(--text-dim); font-weight: 600; cursor: default; }
 .tree-node.folder:hover{ background: none; }
 .tree-children{ margin-left: 18px; display:flex; flex-direction: column; gap: 2px; }
+.tree-badge{
+  margin-left: 8px; padding: 1px 6px; border-radius: 999px;
+  font-size: 10px; font-weight: 700; letter-spacing: .04em;
+  border: 1px solid currentColor;
+}
+.tree-badge.issue-circular{ color: #f87171; }
+.tree-badge.issue-unused{ color: var(--amber, #f59e0b); }
+.tree-badge.issue-dead{ color: #a78bfa; }
 
 /* ===== Responsive ===== */
 @media (max-width: 1180px){
@@ -689,4 +697,50 @@ svg{ width: 16px; height: 16px; flex-shrink: 0; }
   box-sizing: border-box;
   pointer-events: none;
   z-index: 0;
+}
+
+/* ===== Architecture issue markers ===== */
+.node.issue-circular{
+  border-color: rgba(239,68,68,0.75);
+  box-shadow: 0 0 0 1px rgba(239,68,68,0.18), 0 0 18px rgba(239,68,68,0.10);
+}
+.node.issue-circular svg{ color: #f87171; }
+.node.issue-unused,
+.node.issue-dead{
+  border-color: rgba(245,158,11,0.72);
+  box-shadow: 0 0 0 1px rgba(245,158,11,0.14);
+}
+.node.issue-dead{ border-style: dashed; }
+.node.issue-unused svg,
+.node.issue-dead svg{ color: var(--amber); }
+.node-issue-badge{
+  position: absolute;
+  top: -9px;
+  right: 8px;
+  z-index: 4;
+  max-width: calc(100% - 16px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--panel);
+  border: 1px solid rgba(245,158,11,0.55);
+  color: var(--amber);
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: .04em;
+  pointer-events: none;
+}
+.node.issue-circular .node-issue-badge{
+  border-color: rgba(239,68,68,0.65);
+  color: #f87171;
+}
+.node{ overflow: visible; }
+.node .node-issue-badge{
+  display:block;
+  margin-top:0;
+  font-size:8px;
+  line-height:1.2;
+  color:var(--amber);
 }

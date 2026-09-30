@@ -1,33 +1,32 @@
-# tests/test_app.py
-
 import unittest
+
 from app import app
+
 
 class TestAppRoutes(unittest.TestCase):
     def setUp(self):
-        self.app = app.test_client()
-        self.app.testing = True
+        self.client = app.test_client()
+        self.client.testing = True
 
-    def test_hello_route(self):
-        response = self.app.get('/')
+    def test_health_route(self):
+        response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data.decode('utf-8'), "Hello, Flask!")
+        self.assertEqual(response.get_json()["status"], "ok")
 
-    def test_add_item_route(self):
-        response = self.app.post('/items', json={"name": "item1"})
-        self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.get_json(), {'message': 'Item added successfully'})
+    def test_get_items_route(self):
+        response = self.client.get("/items")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.get_json()["items"]), 3)
 
     def test_get_item_route(self):
-        response = self.app.get('/items/0')
+        response = self.client.get("/items/1")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json(), {'item': {'name': 'item1'}})
+        self.assertEqual(response.get_json()["item"]["name"], "Keyboard")
 
-    def test_get_nonexistent_item_route(self):
-        response = self.app.get('/items/1')
+    def test_get_missing_item_route(self):
+        response = self.client.get("/items/99")
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.get_json(), {'error': 'Item not found'})
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()
-
